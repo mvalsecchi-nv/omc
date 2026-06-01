@@ -102,37 +102,41 @@ var GetCmd = &cobra.Command{
 		if len(args) == 0 {
 			return cmd.Help()
 		}
-		if vars.OutputStringVar == "wide" {
-			vars.Wide = true
-		}
-		if err := validateArgs(args); err != nil {
+		return Run(cmd.OutOrStdout(), cmd.ErrOrStderr(), args)
+	},
+}
+
+func Run(stdout, stderr io.Writer, args []string) error {
+	if vars.OutputStringVar == "wide" {
+		vars.Wide = true
+	}
+	if err := validateArgs(args); err != nil {
+		return err
+	}
+	s := newState()
+	for resource := range vars.GetArgs {
+		resourceNamePlural, resourceGroup, _, namespaced, err := KindGroupNamespaced(resource)
+		if err != nil {
+			klog.V(1).ErrorS(err, "ERROR")
 			return err
 		}
-		s := newState()
-		for resource := range vars.GetArgs {
-			resourceNamePlural, resourceGroup, _, namespaced, err := KindGroupNamespaced(resource)
-			if err != nil {
-				klog.V(1).ErrorS(err, "ERROR")
-				return err
-			}
-			// namespaces and projects resources
-			// are exceptions to must-gather resources structure
-			switch {
-			case resourceNamePlural == "namespaces" || resourceNamePlural == "projects":
-				err = getNamespacesResources(s, vars.GetArgs[resourceNamePlural+"."+resourceGroup])
-			case resourceNamePlural == "podnetworkconnectivitychecks":
-				err = getPodNetworkConnectivityChecksResources(s, vars.GetArgs[resourceNamePlural+"."+resourceGroup])
-			case namespaced:
-				err = getNamespacedResources(s, resourceNamePlural, resourceGroup, vars.GetArgs[resourceNamePlural+"."+resourceGroup])
-			default:
-				err = getClusterScopedResources(s, resourceNamePlural, resourceGroup, vars.GetArgs[resourceNamePlural+"."+resourceGroup])
-			}
-			if err != nil {
-				return err
-			}
+		// namespaces and projects resources
+		// are exceptions to must-gather resources structure
+		switch {
+		case resourceNamePlural == "namespaces" || resourceNamePlural == "projects":
+			err = getNamespacesResources(s, vars.GetArgs[resourceNamePlural+"."+resourceGroup])
+		case resourceNamePlural == "podnetworkconnectivitychecks":
+			err = getPodNetworkConnectivityChecksResources(s, vars.GetArgs[resourceNamePlural+"."+resourceGroup])
+		case namespaced:
+			err = getNamespacedResources(s, resourceNamePlural, resourceGroup, vars.GetArgs[resourceNamePlural+"."+resourceGroup])
+		default:
+			err = getClusterScopedResources(s, resourceNamePlural, resourceGroup, vars.GetArgs[resourceNamePlural+"."+resourceGroup])
 		}
-		return s.handleOutput(os.Stdout, os.Stderr)
-	},
+		if err != nil {
+			return err
+		}
+	}
+	return s.handleOutput(stdout, stderr)
 }
 
 func init() {
@@ -601,11 +605,11 @@ func (s *state) handleOutput(w io.Writer, errOut io.Writer) error {
 			return err
 		}
 		if vars.SingleResource && len(s.unstructuredList.Items) == 1 {
-			if err := helpers.ExecuteJsonPath(s.unstructuredList.Items[0].Object, jsonPathTemplate); err != nil {
+			if err := helpers.ExecuteJsonPathTo(w, s.unstructuredList.Items[0].Object, jsonPathTemplate); err != nil {
 				return err
 			}
 		} else if !vars.SingleResource && len(s.unstructuredList.Items) > 0 {
-			if err := helpers.ExecuteJsonPath(s.jsonPathList, jsonPathTemplate); err != nil {
+			if err := helpers.ExecuteJsonPathTo(w, s.jsonPathList, jsonPathTemplate); err != nil {
 				return err
 			}
 		} else {

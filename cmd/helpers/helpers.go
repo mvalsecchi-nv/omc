@@ -105,6 +105,10 @@ func FormatDiffTime(diff time.Duration) string {
 }
 
 func ExecuteJsonPath(data interface{}, jsonPathTemplate string) error {
+	return ExecuteJsonPathTo(os.Stdout, data, jsonPathTemplate)
+}
+
+func ExecuteJsonPathTo(w io.Writer, data interface{}, jsonPathTemplate string) error {
 	buf := new(bytes.Buffer)
 	jPath := jsonpath.New("out")
 	jPath.AllowMissingKeys(false)
@@ -115,7 +119,9 @@ func ExecuteJsonPath(data interface{}, jsonPathTemplate string) error {
 	if err := jPath.Execute(buf, data); err != nil {
 		return fmt.Errorf("error executing jsonpath %s, %w", jsonPathTemplate, err)
 	}
-	fmt.Print(buf)
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		return fmt.Errorf("error writing jsonpath output: %w", err)
+	}
 	return nil
 }
 
