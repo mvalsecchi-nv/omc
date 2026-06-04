@@ -211,16 +211,55 @@ items:
 `
 }
 
+// TestRun_LibraryAndCobraParity proves that calling Run directly with an
+// Options matches what comes out of Logs.Execute() for the equivalent
+// flags. Keeps the cobra wrapper and the library entry point in lockstep.
+func TestRun_LibraryAndCobraParity(t *testing.T) {
+	root := writePodsListFixture(t, podListYAML("test-pod", "test-container"))
+	logDir := filepath.Join(root, "namespaces", "test-namespace", "pods", "test-pod", "test-container", "test-container", "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "current.log"), []byte("hello world\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	restoreLogsCommandState(t)
+	vars.MustGatherRootPath = root
+	vars.Namespace = "test-namespace"
+
+	var libOut, libErr bytes.Buffer
+	opts := Options{Container: "test-container", Tail: -1}
+	if err := Run(&libOut, &libErr, opts, []string{"test-pod"}); err != nil {
+		t.Fatalf("library Run: %v", err)
+	}
+
+	var cobraOut, cobraErr bytes.Buffer
+	Logs.SetOut(&cobraOut)
+	Logs.SetErr(&cobraErr)
+	Logs.SetArgs([]string{"-c", "test-container", "test-pod"})
+	if err := Logs.Execute(); err != nil {
+		t.Fatalf("Logs.Execute: %v", err)
+	}
+
+	if libOut.String() != cobraOut.String() {
+		t.Fatalf("stdout drift between library and cobra paths\nlibrary:\n%s\ncobra:\n%s", libOut.String(), cobraOut.String())
+	}
+	if libOut.Len() == 0 {
+		t.Fatalf("expected non-empty output from fixture")
+	}
+}
+
 func restoreLogsCommandState(t *testing.T) {
 	t.Helper()
 	savedPath := vars.MustGatherRootPath
 	savedNamespace := vars.Namespace
-	savedContainer := vars.Container
-	savedPrevious := vars.Previous
-	savedRotated := vars.Rotated
-	savedAllContainers := vars.AllContainers
-	savedInsecureLogs := vars.InsecureLogs
-	savedTail := vars.Tail
+	savedContainer := containerFlag
+	savedPrevious := previousFlag
+	savedRotated := rotatedFlag
+	savedAllContainers := allContainersFlag
+	savedInsecureLogs := insecureFlag
+	savedTail := tailFlag
 	savedLogLevel := LogLevel
 
 	t.Cleanup(func() {
@@ -235,12 +274,6 @@ func restoreLogsCommandState(t *testing.T) {
 		_ = Logs.PersistentFlags().Set("tail", strconv.FormatInt(savedTail, 10))
 		vars.MustGatherRootPath = savedPath
 		vars.Namespace = savedNamespace
-		vars.Container = savedContainer
-		vars.Previous = savedPrevious
-		vars.Rotated = savedRotated
-		vars.AllContainers = savedAllContainers
-		vars.InsecureLogs = savedInsecureLogs
-		vars.Tail = savedTail
 		LogLevel = savedLogLevel
 	})
 }
