@@ -64,14 +64,14 @@ func TestHandleEmptyWideOutput(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			vars.MustGatherRootPath = "../../testdata/"
-			vars.Namespace = tt.namespace
-			validateArgs(tt.rtype)
-			newState().handleOutput(&stdout, &stderr)
+			opts := newOptions()
+			opts.Namespace = tt.namespace
+			validateArgs(&opts, tt.rtype)
+			newState(&opts).handleOutput(&stdout, &stderr)
 			if !strings.Contains(stderr.String(), tt.want) {
 				t.Errorf("Got: %v \n", stderr.String())
 				t.Errorf("Want: %v \n", tt.want)
 			}
-			vars.GetArgs = make(map[string]map[string]struct{})
 		})
 	}
 }
@@ -90,7 +90,8 @@ func TestGetClusterScopedResources_ReturnsErrorOnCorruptYAML(t *testing.T) {
 	t.Cleanup(func() { vars.MustGatherRootPath = saved })
 	vars.MustGatherRootPath = root
 
-	if err := getClusterScopedResources(newState(), "clusterversions", "config.openshift.io", nil); err == nil {
+	opts := newOptions()
+	if err := getClusterScopedResources(newState(&opts), "clusterversions", "config.openshift.io", nil); err == nil {
 		t.Fatalf("expected error from corrupt yaml, got nil")
 	}
 }
@@ -106,16 +107,13 @@ func TestGetCmd_PropagatesErrorThroughCobra(t *testing.T) {
 	}
 
 	savedPath := vars.MustGatherRootPath
-	savedArgs := vars.GetArgs
 	t.Cleanup(func() {
 		vars.MustGatherRootPath = savedPath
-		vars.GetArgs = savedArgs
 		GetCmd.SetArgs(nil)
 		GetCmd.SetOut(nil)
 		GetCmd.SetErr(nil)
 	})
 	vars.MustGatherRootPath = root
-	vars.GetArgs = make(map[string]map[string]struct{})
 
 	GetCmd.SetArgs([]string{"clusterversions"})
 	GetCmd.SetOut(new(bytes.Buffer))
@@ -128,23 +126,20 @@ func TestGetCmd_PropagatesErrorThroughCobra(t *testing.T) {
 
 func TestHandleObject_ReturnsErrorOnBadCustomColumns(t *testing.T) {
 	savedOutput := vars.OutputStringVar
-	savedNs := vars.Namespace
-	savedSel := vars.LabelSelectorStringVar
-	t.Cleanup(func() {
-		vars.OutputStringVar = savedOutput
-		vars.Namespace = savedNs
-		vars.LabelSelectorStringVar = savedSel
-	})
+	t.Cleanup(func() { vars.OutputStringVar = savedOutput })
+	// tablegenerator still reads vars.OutputStringVar; bridge it for this
+	// unit test that bypasses Run.
 	vars.OutputStringVar = "custom-columns=BAD"
-	vars.Namespace = ""
-	vars.LabelSelectorStringVar = ""
+
+	opts := newOptions()
+	opts.Output = "custom-columns=BAD"
 
 	obj := unstructured.Unstructured{}
 	obj.SetAPIVersion("v1")
 	obj.SetKind("ConfigMap")
 	obj.SetName("test")
 
-	if err := newState().handleObject(obj); err == nil {
+	if err := newState(&opts).handleObject(obj); err == nil {
 		t.Fatalf("expected handleObject to return error for malformed custom-columns spec, got nil")
 	}
 }
@@ -171,24 +166,17 @@ items:
 	}
 
 	savedPath := vars.MustGatherRootPath
-	savedArgs := vars.GetArgs
-	savedOutput := vars.OutputStringVar
-	savedNs := vars.Namespace
 	t.Cleanup(func() {
 		vars.MustGatherRootPath = savedPath
-		vars.GetArgs = savedArgs
-		vars.OutputStringVar = savedOutput
-		vars.Namespace = savedNs
 	})
 	vars.MustGatherRootPath = root
-	vars.GetArgs = map[string]map[string]struct{}{
-		"clusterversions.config.openshift.io": {},
-	}
-	vars.OutputStringVar = ""
-	vars.Namespace = ""
 
 	run := func() string {
-		s := newState()
+		opts := newOptions()
+		opts.GetArgs = map[string]map[string]struct{}{
+			"clusterversions.config.openshift.io": {},
+		}
+		s := newState(&opts)
 		if err := getClusterScopedResources(s, "clusterversions", "config.openshift.io", nil); err != nil {
 			t.Fatalf("getClusterScopedResources: %v", err)
 		}
@@ -231,18 +219,15 @@ items:
 	}
 
 	savedPath := vars.MustGatherRootPath
-	savedArgs := vars.GetArgs
 	savedOutput := vars.OutputStringVar
 	t.Cleanup(func() {
 		vars.MustGatherRootPath = savedPath
-		vars.GetArgs = savedArgs
 		vars.OutputStringVar = savedOutput
 		GetCmd.SetArgs(nil)
 		GetCmd.SetOut(nil)
 		GetCmd.SetErr(nil)
 	})
 	vars.MustGatherRootPath = root
-	vars.GetArgs = make(map[string]map[string]struct{})
 
 	GetCmd.SetArgs([]string{"clusterversions", "-o", "custom-columns=BAD"})
 	GetCmd.SetOut(new(bytes.Buffer))
@@ -250,5 +235,74 @@ items:
 
 	if err := GetCmd.Execute(); err == nil {
 		t.Fatalf("expected GetCmd.Execute to surface the CustomColumnsTable error, got nil")
+	}
+}
+
+// TestRun_LibraryAndCobraParity proves that calling Run directly with an
+// Options matches what comes out of GetCmd.Execute() given the equivalent
+// flags. Keeps the cobra wrapper and the library entry point in lockstep
+// so a future refactor cannot silently break one or the other.
+func TestRun_LibraryAndCobraParity(t *testing.T) {
+	root := t.TempDir()
+	rdir := filepath.Join(root, "cluster-scoped-resources", "config.openshift.io")
+	if err := os.MkdirAll(rdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fixture := []byte(`apiVersion: v1
+kind: List
+items:
+- apiVersion: config.openshift.io/v1
+  kind: ClusterVersion
+  metadata:
+    name: version
+  status:
+    desired:
+      version: "4.17.11"
+`)
+	if err := os.WriteFile(filepath.Join(rdir, "clusterversions.yaml"), fixture, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	savedPath := vars.MustGatherRootPath
+	savedOutput := vars.OutputStringVar
+	savedNs := vars.Namespace
+	savedWide := vars.Wide
+	savedShowKind := vars.ShowKind
+	savedShowNs := vars.ShowNamespace
+	savedShowLabels := vars.ShowLabelsBoolVar
+	t.Cleanup(func() {
+		vars.MustGatherRootPath = savedPath
+		vars.OutputStringVar = savedOutput
+		vars.Namespace = savedNs
+		vars.Wide = savedWide
+		vars.ShowKind = savedShowKind
+		vars.ShowNamespace = savedShowNs
+		vars.ShowLabelsBoolVar = savedShowLabels
+		GetCmd.SetArgs(nil)
+		GetCmd.SetOut(nil)
+		GetCmd.SetErr(nil)
+	})
+	vars.MustGatherRootPath = root
+
+	var libOut, libErr bytes.Buffer
+	opts := newOptions()
+	opts.Output = "yaml"
+	if err := Run(&libOut, &libErr, opts, []string{"clusterversions"}); err != nil {
+		t.Fatalf("library Run: %v", err)
+	}
+
+	var cobraOut, cobraErr bytes.Buffer
+	GetCmd.SetArgs([]string{"clusterversions", "-o", "yaml"})
+	GetCmd.SetOut(&cobraOut)
+	GetCmd.SetErr(&cobraErr)
+	if err := GetCmd.Execute(); err != nil {
+		t.Fatalf("GetCmd.Execute: %v", err)
+	}
+
+	if libOut.String() != cobraOut.String() {
+		t.Fatalf("stdout drift between library and cobra paths\nlibrary:\n%s\ncobra:\n%s", libOut.String(), cobraOut.String())
+	}
+	if libOut.Len() == 0 {
+		t.Fatalf("expected non-empty output from fixture")
 	}
 }

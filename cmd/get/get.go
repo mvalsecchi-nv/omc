@@ -74,11 +74,21 @@ var jsonRegexp = regexp.MustCompile(`^\{\.?([^{}]+)\}$|^\.?([^{}]+)$`)
 //go:embed known-resources.yaml
 var yamlData []byte
 
+// Flag binding targets. Cobra needs a stable address to write into, so these
+// stay as package vars. RunE copies them into an Options before handing off
+// to Run, which is the only thing the rest of the pipeline reads.
+var (
+	labelSelectorFlag string
+	noHeadersFlag     bool
+	sortByFlag        string
+)
+
 // state holds the per-invocation accumulator fields that handleObject and
 // handleOutput build up as resources are read. Keeping these out of the vars
 // package makes the get pipeline reentrant and is a precondition for any
 // future concurrent producer/consumer in this command.
 type state struct {
+	opts             *Options
 	output           bytes.Buffer
 	table            metav1.Table
 	currentKind      string
@@ -87,8 +97,9 @@ type state struct {
 	jsonPathList     types.JsonPathList
 }
 
-func newState() *state {
+func newState(opts *Options) *state {
 	return &state{
+		opts:             opts,
 		unstructuredList: types.UnstructuredList{Kind: "List", ApiVersion: "v1", Items: []unstructured.Unstructured{}},
 		jsonPathList:     types.JsonPathList{Kind: "List", ApiVersion: "v1"},
 	}
@@ -102,19 +113,39 @@ var GetCmd = &cobra.Command{
 		if len(args) == 0 {
 			return cmd.Help()
 		}
-		return Run(cmd.OutOrStdout(), cmd.ErrOrStderr(), args)
+		opts := Options{
+			Namespace:     vars.Namespace,
+			Output:        vars.OutputStringVar,
+			LabelSelector: labelSelectorFlag,
+			NoHeaders:     noHeadersFlag,
+			AllNamespaces: vars.AllNamespaceBoolVar,
+			ShowLabels:    vars.ShowLabelsBoolVar,
+			SortBy:        sortByFlag,
+			GetArgs:       make(map[string]map[string]struct{}),
+		}
+		return Run(cmd.OutOrStdout(), cmd.ErrOrStderr(), opts, args)
 	},
 }
 
-func Run(stdout, stderr io.Writer, args []string) error {
-	if vars.OutputStringVar == "wide" {
-		vars.Wide = true
+func Run(stdout, stderr io.Writer, opts Options, args []string) error {
+	if opts.GetArgs == nil {
+		opts.GetArgs = make(map[string]map[string]struct{})
 	}
-	if err := validateArgs(args); err != nil {
+	if opts.Output == "wide" {
+		opts.Wide = true
+	}
+	if err := validateArgs(&opts, args); err != nil {
 		return err
 	}
-	s := newState()
-	for resource := range vars.GetArgs {
+	// tablegenerator still reads these from vars; bridge until that package
+	// is converted to take options too.
+	vars.Wide = opts.Wide
+	vars.ShowKind = opts.ShowKind
+	vars.OutputStringVar = opts.Output
+	vars.Namespace = opts.Namespace
+	vars.ShowLabelsBoolVar = opts.ShowLabels
+	s := newState(&opts)
+	for resource := range opts.GetArgs {
 		resourceNamePlural, resourceGroup, _, namespaced, err := KindGroupNamespaced(resource)
 		if err != nil {
 			klog.V(1).ErrorS(err, "ERROR")
@@ -124,13 +155,13 @@ func Run(stdout, stderr io.Writer, args []string) error {
 		// are exceptions to must-gather resources structure
 		switch {
 		case resourceNamePlural == "namespaces" || resourceNamePlural == "projects":
-			err = getNamespacesResources(s, vars.GetArgs[resourceNamePlural+"."+resourceGroup])
+			err = getNamespacesResources(s, opts.GetArgs[resourceNamePlural+"."+resourceGroup])
 		case resourceNamePlural == "podnetworkconnectivitychecks":
-			err = getPodNetworkConnectivityChecksResources(s, vars.GetArgs[resourceNamePlural+"."+resourceGroup])
+			err = getPodNetworkConnectivityChecksResources(s, opts.GetArgs[resourceNamePlural+"."+resourceGroup])
 		case namespaced:
-			err = getNamespacedResources(s, resourceNamePlural, resourceGroup, vars.GetArgs[resourceNamePlural+"."+resourceGroup])
+			err = getNamespacedResources(s, resourceNamePlural, resourceGroup, opts.GetArgs[resourceNamePlural+"."+resourceGroup])
 		default:
-			err = getClusterScopedResources(s, resourceNamePlural, resourceGroup, vars.GetArgs[resourceNamePlural+"."+resourceGroup])
+			err = getClusterScopedResources(s, resourceNamePlural, resourceGroup, opts.GetArgs[resourceNamePlural+"."+resourceGroup])
 		}
 		if err != nil {
 			return err
@@ -141,16 +172,15 @@ func Run(stdout, stderr io.Writer, args []string) error {
 
 func init() {
 	GetCmd.PersistentFlags().BoolVarP(&vars.AllNamespaceBoolVar, "all-namespaces", "A", false, "If present, list the requested object(s) across all namespaces.")
-	GetCmd.PersistentFlags().BoolVar(&vars.NoHeaders, "no-headers", false, "When using the default or custom-column output format, don't print headers (default print headers).")
+	GetCmd.PersistentFlags().BoolVar(&noHeadersFlag, "no-headers", false, "When using the default or custom-column output format, don't print headers (default print headers).")
 	GetCmd.PersistentFlags().BoolVar(&vars.ShowManagedFields, "show-managed-fields", false, "If true, show the managedFields when printing objects in JSON or YAML format.")
 	GetCmd.PersistentFlags().BoolVarP(&vars.ShowLabelsBoolVar, "show-labels", "", false, "When printing, show all labels as the last column (default hide labels column)")
 	GetCmd.PersistentFlags().StringVarP(&vars.OutputStringVar, "output", "o", "", "Output format. One of: json|yaml|wide|jsonpath|custom-columns=...")
-	GetCmd.PersistentFlags().StringVarP(&vars.LabelSelectorStringVar, "selector", "l", "", "selector (label query) to filter on, supports '=', '==', and '!='.(e.g. -l key1=value1,key2=value2)")
-	GetCmd.PersistentFlags().StringVarP(&vars.SortBy, "sort-by", "", "", "If non-empty, sort list types using this field specification. The field specification is expressed as a JSONPath expression (e.g. '{.metadata.name}').")
+	GetCmd.PersistentFlags().StringVarP(&labelSelectorFlag, "selector", "l", "", "selector (label query) to filter on, supports '=', '==', and '!='.(e.g. -l key1=value1,key2=value2)")
+	GetCmd.PersistentFlags().StringVarP(&sortByFlag, "sort-by", "", "", "If non-empty, sort list types using this field specification. The field specification is expressed as a JSONPath expression (e.g. '{.metadata.name}').")
 }
 
 func init() {
-	vars.GetArgs = make(map[string]map[string]struct{})
 	vars.AliasToCrd = make(map[string]apiextensionsv1.CustomResourceDefinition)
 	vars.ArgPresent = make(map[string]bool)
 	vars.KnownResources = make(map[string]map[string]interface{})
@@ -221,15 +251,16 @@ func init() {
 
 func getNamespacedResources(s *state, resourceNamePlural string, resourceGroup string, resources map[string]struct{}) error {
 	var namespaces []string
-	if vars.AllNamespaceBoolVar {
-		vars.Namespace = ""
+	if s.opts.AllNamespaces {
+		s.opts.Namespace = ""
+		s.opts.ShowNamespace = true
 		vars.ShowNamespace = true
 		_namespaces, _ := ReadDirForResources(vars.MustGatherRootPath + "/namespaces/")
 		for _, f := range _namespaces {
 			namespaces = append(namespaces, f.Name())
 		}
 	} else {
-		namespaces = append(namespaces, vars.Namespace)
+		namespaces = append(namespaces, s.opts.Namespace)
 	}
 	for _, namespace := range namespaces {
 		UnstructuredItems := types.UnstructuredList{ApiVersion: "v1", Kind: "List"}
@@ -268,8 +299,8 @@ func getNamespacedResources(s *state, resourceNamePlural string, resourceGroup s
 				}
 			}
 
-			if vars.SortBy != "" {
-				UnstructuredItems.Items = sortResources(UnstructuredItems.Items, vars.SortBy)
+			if s.opts.SortBy != "" {
+				UnstructuredItems.Items = sortResources(UnstructuredItems.Items, s.opts.SortBy)
 			}
 			for _, item := range UnstructuredItems.Items {
 				if len(resources) > 0 {
@@ -311,7 +342,7 @@ func getNamespacedResources(s *state, resourceNamePlural string, resourceGroup s
 					if err := yaml.Unmarshal(_file, &item); err != nil {
 						return fmt.Errorf("error unmarshaling %s: %w", resourceYamlPath, err)
 					}
-					if vars.SortBy != "" {
+					if s.opts.SortBy != "" {
 						sortObjects = append(sortObjects, item)
 					} else {
 						if len(resources) > 0 {
@@ -328,8 +359,8 @@ func getNamespacedResources(s *state, resourceNamePlural string, resourceGroup s
 					}
 				}
 
-				if vars.SortBy != "" {
-					sortObjects = sortResources(sortObjects, vars.SortBy)
+				if s.opts.SortBy != "" {
+					sortObjects = sortResources(sortObjects, s.opts.SortBy)
 					for _, item := range sortObjects {
 						if len(resources) > 0 {
 							if _, ok := resources[item.GetName()]; ok {
@@ -361,7 +392,7 @@ func getNamespacesResources(s *state, resources map[string]struct{}) error {
 				if err := yaml.Unmarshal(_file, &item); err != nil {
 					return fmt.Errorf("error unmarshaling %s: %w", resourceYamlPath, err)
 				}
-				if vars.SortBy != "" {
+				if s.opts.SortBy != "" {
 					sortObjects = append(sortObjects, item)
 				} else {
 					if err := s.handleObject(item); err != nil {
@@ -380,7 +411,7 @@ func getNamespacesResources(s *state, resources map[string]struct{}) error {
 				if err := yaml.Unmarshal(_file, &item); err != nil {
 					return fmt.Errorf("error unmarshaling %s: %w", resourceYamlPath, err)
 				}
-				if vars.SortBy != "" {
+				if s.opts.SortBy != "" {
 					sortObjects = append(sortObjects, item)
 				} else {
 					if err := s.handleObject(item); err != nil {
@@ -390,8 +421,8 @@ func getNamespacesResources(s *state, resources map[string]struct{}) error {
 			}
 		}
 	}
-	if vars.SortBy != "" {
-		sortObjects = sortResources(sortObjects, vars.SortBy)
+	if s.opts.SortBy != "" {
+		sortObjects = sortResources(sortObjects, s.opts.SortBy)
 		for _, item := range sortObjects {
 			if err := s.handleObject(item); err != nil {
 				return err
@@ -424,7 +455,7 @@ func getClusterScopedResources(s *state, resourceNamePlural string, resourceGrou
 			if item.IsList() {
 				return fmt.Errorf("file %q contains a \"List\" objectKind, while it should contain a single resource", resourceYamlPath)
 			}
-			if vars.SortBy != "" {
+			if s.opts.SortBy != "" {
 				UnstructuredItems.Items = append(UnstructuredItems.Items, item)
 			} else {
 				if len(resources) > 0 {
@@ -440,8 +471,8 @@ func getClusterScopedResources(s *state, resourceNamePlural string, resourceGrou
 				}
 			}
 		}
-		if vars.SortBy != "" {
-			UnstructuredItems.Items = sortResources(UnstructuredItems.Items, vars.SortBy)
+		if s.opts.SortBy != "" {
+			UnstructuredItems.Items = sortResources(UnstructuredItems.Items, s.opts.SortBy)
 			for _, item := range UnstructuredItems.Items {
 				if len(resources) > 0 {
 					if _, ok := resources[item.GetName()]; ok {
@@ -460,8 +491,8 @@ func getClusterScopedResources(s *state, resourceNamePlural string, resourceGrou
 		if err := yaml.Unmarshal(_file, &UnstructuredItems); err != nil {
 			return fmt.Errorf("error unmarshaling %s: %w", resourcePath, err)
 		}
-		if vars.SortBy != "" {
-			UnstructuredItems.Items = sortResources(UnstructuredItems.Items, vars.SortBy)
+		if s.opts.SortBy != "" {
+			UnstructuredItems.Items = sortResources(UnstructuredItems.Items, s.opts.SortBy)
 		}
 		for _, item := range UnstructuredItems.Items {
 			if len(resources) > 0 {
@@ -481,25 +512,25 @@ func getClusterScopedResources(s *state, resourceNamePlural string, resourceGrou
 }
 
 func (s *state) handleObject(obj unstructured.Unstructured) error {
-	if vars.Namespace != "" && obj.GetNamespace() != "" && vars.Namespace != obj.GetNamespace() {
+	if s.opts.Namespace != "" && obj.GetNamespace() != "" && s.opts.Namespace != obj.GetNamespace() {
 		return nil
 	}
-	labelsOk, err := helpers.MatchLabelsFromMap(obj.GetLabels(), vars.LabelSelectorStringVar)
+	labelsOk, err := helpers.MatchLabelsFromMap(obj.GetLabels(), s.opts.LabelSelector)
 	if err != nil {
-		return fmt.Errorf("invalid label selector %q: %w", vars.LabelSelectorStringVar, err)
+		return fmt.Errorf("invalid label selector %q: %w", s.opts.LabelSelector, err)
 	}
 	if !labelsOk {
 		return nil
 	}
 	s.lastKind = obj.GetKind()
-	if vars.OutputStringVar == "yaml" || vars.OutputStringVar == "json" {
+	if s.opts.Output == "yaml" || s.opts.Output == "json" {
 		if !vars.ShowManagedFields {
 			obj.SetManagedFields(nil)
 		}
 		s.unstructuredList.Items = append(s.unstructuredList.Items, obj)
 		return nil
 	}
-	if strings.HasPrefix(vars.OutputStringVar, "jsonpath=") {
+	if strings.HasPrefix(s.opts.Output, "jsonpath=") {
 		if !vars.ShowManagedFields {
 			obj.SetManagedFields(nil)
 		}
@@ -507,7 +538,7 @@ func (s *state) handleObject(obj unstructured.Unstructured) error {
 		s.jsonPathList.Items = append(s.jsonPathList.Items, obj.Object)
 		return nil
 	}
-	if vars.OutputStringVar == "name" {
+	if s.opts.Output == "name" {
 		if obj.GetAPIVersion() == "v1" {
 			s.output.WriteString(strings.ToLower(obj.GetKind()) + "/" + obj.GetName() + "\n")
 		} else {
@@ -522,7 +553,7 @@ func (s *state) handleObject(obj unstructured.Unstructured) error {
 	}
 	klog.V(3).Info("INFO deserializing ", obj.GetKind(), " ", obj.GetName())
 	var objectTable *metav1.Table
-	if strings.HasPrefix(vars.OutputStringVar, "custom-columns=") {
+	if strings.HasPrefix(s.opts.Output, "custom-columns=") {
 		objectTable, err = tablegenerator.CustomColumnsTable(&obj)
 		if err != nil {
 			klog.V(1).ErrorS(err, err.Error())
@@ -554,7 +585,7 @@ func (s *state) handleObject(obj unstructured.Unstructured) error {
 		s.table.Rows = append(s.table.Rows, objectTable.Rows...)
 	} else {
 		// printo la tabella dell'oggetto precedente
-		printer := cliprint.NewTablePrinter(cliprint.PrintOptions{NoHeaders: vars.NoHeaders, Wide: vars.Wide, WithNamespace: false, ShowLabels: false})
+		printer := cliprint.NewTablePrinter(cliprint.PrintOptions{NoHeaders: s.opts.NoHeaders, Wide: s.opts.Wide, WithNamespace: false, ShowLabels: false})
 		err = printer.PrintObj(&s.table, &s.output)
 		if err != nil {
 			klog.V(1).ErrorS(err, err.Error())
@@ -570,10 +601,10 @@ func (s *state) handleObject(obj unstructured.Unstructured) error {
 }
 
 func (s *state) handleOutput(w io.Writer, errOut io.Writer) error {
-	printer := cliprint.NewTablePrinter(cliprint.PrintOptions{NoHeaders: vars.NoHeaders, Wide: vars.Wide, WithNamespace: false, ShowLabels: false})
-	_resources := make([]string, 0, len(vars.GetArgs))
+	printer := cliprint.NewTablePrinter(cliprint.PrintOptions{NoHeaders: s.opts.NoHeaders, Wide: s.opts.Wide, WithNamespace: false, ShowLabels: false})
+	_resources := make([]string, 0, len(s.opts.GetArgs))
 	var includesClusterScoped bool
-	for resource := range vars.GetArgs {
+	for resource := range s.opts.GetArgs {
 		_resources = append(_resources, resource)
 		// if at least one resource is cluster-scoped, never include a namespace in the output if no resources are found of the kind
 		_, _, _, namespaced, _ := KindGroupNamespaced(resource)
@@ -583,52 +614,52 @@ func (s *state) handleOutput(w io.Writer, errOut io.Writer) error {
 	}
 	sort.Strings(_resources)
 	resources := strings.Join(_resources, ",")
-	if vars.OutputStringVar == "json" {
-		if vars.SingleResource && len(s.unstructuredList.Items) == 1 {
+	if s.opts.Output == "json" {
+		if s.opts.SingleResource && len(s.unstructuredList.Items) == 1 {
 			data, _ := json.MarshalIndent(s.unstructuredList.Items[0].Object, "", "  ")
 			data = append(data, '\n')
 			fmt.Fprintf(w, "%s", data)
-		} else if !vars.SingleResource && len(s.unstructuredList.Items) > 0 {
+		} else if !s.opts.SingleResource && len(s.unstructuredList.Items) > 0 {
 			data, _ := json.MarshalIndent(s.unstructuredList, "", "  ")
 			data = append(data, '\n')
 			fmt.Fprintf(w, "%s", data)
 		} else {
-			if vars.Namespace != "" {
-				fmt.Fprintf(errOut, "No resources %s found in %s namespace.\n", resources, vars.Namespace)
+			if s.opts.Namespace != "" {
+				fmt.Fprintf(errOut, "No resources %s found in %s namespace.\n", resources, s.opts.Namespace)
 			} else {
 				fmt.Fprintf(errOut, "No resources %s found.\n", resources)
 			}
 		}
-	} else if strings.HasPrefix(vars.OutputStringVar, "jsonpath=") {
-		jsonPathTemplate, err := helpers.GetJsonTemplate(vars.OutputStringVar)
+	} else if strings.HasPrefix(s.opts.Output, "jsonpath=") {
+		jsonPathTemplate, err := helpers.GetJsonTemplate(s.opts.Output)
 		if err != nil {
 			return err
 		}
-		if vars.SingleResource && len(s.unstructuredList.Items) == 1 {
+		if s.opts.SingleResource && len(s.unstructuredList.Items) == 1 {
 			if err := helpers.ExecuteJsonPathTo(w, s.unstructuredList.Items[0].Object, jsonPathTemplate); err != nil {
 				return err
 			}
-		} else if !vars.SingleResource && len(s.unstructuredList.Items) > 0 {
+		} else if !s.opts.SingleResource && len(s.unstructuredList.Items) > 0 {
 			if err := helpers.ExecuteJsonPathTo(w, s.jsonPathList, jsonPathTemplate); err != nil {
 				return err
 			}
 		} else {
-			if vars.Namespace != "" {
-				fmt.Fprintf(errOut, "No resources %s found in %s namespace.\n", resources, vars.Namespace)
+			if s.opts.Namespace != "" {
+				fmt.Fprintf(errOut, "No resources %s found in %s namespace.\n", resources, s.opts.Namespace)
 			} else {
 				fmt.Fprintf(errOut, "No resources %s found.\n", resources)
 			}
 		}
-	} else if vars.OutputStringVar == "yaml" {
-		if vars.SingleResource && len(s.unstructuredList.Items) == 1 {
+	} else if s.opts.Output == "yaml" {
+		if s.opts.SingleResource && len(s.unstructuredList.Items) == 1 {
 			data, _ := yaml.Marshal(s.unstructuredList.Items[0].Object)
 			fmt.Fprintf(w, "%s", data)
 		} else if len(s.unstructuredList.Items) > 0 {
 			data, _ := yaml.Marshal(s.unstructuredList)
 			fmt.Fprintf(w, "%s", data)
 		} else {
-			if vars.Namespace != "" {
-				fmt.Fprintf(errOut, "No resources %s found in %s namespace.\n", resources, vars.Namespace)
+			if s.opts.Namespace != "" {
+				fmt.Fprintf(errOut, "No resources %s found in %s namespace.\n", resources, s.opts.Namespace)
 			} else {
 				fmt.Fprintf(errOut, "No resources %s found.\n", resources)
 			}
@@ -642,10 +673,10 @@ func (s *state) handleOutput(w io.Writer, errOut io.Writer) error {
 		}
 		if s.output.Len() == 0 {
 			// never print the (default/current) namespace if at least one cluster-scoped resource is requested
-			if vars.Namespace == "" || includesClusterScoped {
+			if s.opts.Namespace == "" || includesClusterScoped {
 				fmt.Fprintf(errOut, "No resources %s found.\n", resources)
 			} else {
-				fmt.Fprintf(errOut, "No resources %s found in %s namespace.\n", resources, vars.Namespace)
+				fmt.Fprintf(errOut, "No resources %s found in %s namespace.\n", resources, s.opts.Namespace)
 			}
 		} else {
 			s.output.WriteTo(w)
@@ -711,12 +742,12 @@ func sortResources(list []unstructured.Unstructured, sortBy string) []unstructur
 
 		err := jpath.Execute(abuf, a.UnstructuredContent())
 		if err != nil {
-			klog.V(3).ErrorS(fmt.Errorf("field %s not found in object %s/%s", vars.SortBy, b.GetKind(), b.GetName()), "jsonpath error")
+			klog.V(3).ErrorS(fmt.Errorf("field %s not found in object %s/%s", sortBy, b.GetKind(), b.GetName()), "jsonpath error")
 			return 0
 		}
 		err = jpath.Execute(bbuf, b.UnstructuredContent())
 		if err != nil {
-			klog.V(3).ErrorS(fmt.Errorf("field %s not found in object %s/%s", vars.SortBy, b.GetKind(), b.GetName()), "jsonpath error")
+			klog.V(3).ErrorS(fmt.Errorf("field %s not found in object %s/%s", sortBy, b.GetKind(), b.GetName()), "jsonpath error")
 			return 0
 		}
 
