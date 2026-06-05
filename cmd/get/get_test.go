@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -266,18 +267,10 @@ items:
 	savedPath := vars.MustGatherRootPath
 	savedOutput := vars.OutputStringVar
 	savedNs := vars.Namespace
-	savedWide := vars.Wide
-	savedShowKind := vars.ShowKind
-	savedShowNs := vars.ShowNamespace
-	savedShowLabels := vars.ShowLabelsBoolVar
 	t.Cleanup(func() {
 		vars.MustGatherRootPath = savedPath
 		vars.OutputStringVar = savedOutput
 		vars.Namespace = savedNs
-		vars.Wide = savedWide
-		vars.ShowKind = savedShowKind
-		vars.ShowNamespace = savedShowNs
-		vars.ShowLabelsBoolVar = savedShowLabels
 		GetCmd.SetArgs(nil)
 		GetCmd.SetOut(nil)
 		GetCmd.SetErr(nil)
@@ -304,5 +297,90 @@ items:
 	}
 	if libOut.Len() == 0 {
 		t.Fatalf("expected non-empty output from fixture")
+	}
+}
+
+// TestRun_ConcurrentOptionsIsolation proves that two goroutines calling Run
+// with different Options produce output that matches their own options only,
+// with no bleed from the other call. Before this branch the tablegenerator
+// functions read from vars globals, so concurrent calls would race on fields
+// like vars.ShowKind and vars.Namespace.
+func TestRun_ConcurrentOptionsIsolation(t *testing.T) {
+	t.Parallel()
+
+	// Build a shared fixture with two namespaces and one pod in each.
+	root := t.TempDir()
+	for _, ns := range []string{"ns-a", "ns-b"} {
+		dir := filepath.Join(root, "namespaces", ns, "core")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		pods := []byte(`apiVersion: v1
+kind: List
+items:
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: pod-` + ns + `
+    namespace: ` + ns + `
+  spec: {}
+  status: {}
+`)
+		if err := os.WriteFile(filepath.Join(dir, "pods.yaml"), pods, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	savedPath := vars.MustGatherRootPath
+	t.Cleanup(func() { vars.MustGatherRootPath = savedPath })
+	vars.MustGatherRootPath = root
+
+	const iterations = 50
+	type result struct {
+		out string
+		ns  string
+	}
+	results := make([]result, iterations*2)
+	var wg sync.WaitGroup
+	for i := range iterations {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			opts := newOptions()
+			opts.Namespace = "ns-a"
+			var out, errOut bytes.Buffer
+			if err := Run(&out, &errOut, opts, []string{"pods"}); err != nil {
+				t.Errorf("iteration %d ns-a: %v", i, err)
+				return
+			}
+			results[i*2] = result{out: out.String(), ns: "ns-a"}
+		}()
+		go func() {
+			defer wg.Done()
+			opts := newOptions()
+			opts.Namespace = "ns-b"
+			var out, errOut bytes.Buffer
+			if err := Run(&out, &errOut, opts, []string{"pods"}); err != nil {
+				t.Errorf("iteration %d ns-b: %v", i, err)
+				return
+			}
+			results[i*2+1] = result{out: out.String(), ns: "ns-b"}
+		}()
+		wg.Wait()
+	}
+
+	for i, r := range results {
+		if r.ns == "ns-a" && !strings.Contains(r.out, "pod-ns-a") {
+			t.Errorf("result %d (ns-a): expected pod-ns-a in output, got:\n%s", i, r.out)
+		}
+		if r.ns == "ns-a" && strings.Contains(r.out, "pod-ns-b") {
+			t.Errorf("result %d (ns-a): found pod-ns-b in ns-a output, got:\n%s", i, r.out)
+		}
+		if r.ns == "ns-b" && !strings.Contains(r.out, "pod-ns-b") {
+			t.Errorf("result %d (ns-b): expected pod-ns-b in output, got:\n%s", i, r.out)
+		}
+		if r.ns == "ns-b" && strings.Contains(r.out, "pod-ns-a") {
+			t.Errorf("result %d (ns-b): found pod-ns-a in ns-b output, got:\n%s", i, r.out)
+		}
 	}
 }

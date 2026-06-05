@@ -21,18 +21,19 @@ package get
 // populated either from cobra-bound flag values or from upstream defaults
 // before Run is invoked.
 type Options struct {
-	Namespace      string
-	Output         string
-	LabelSelector  string
-	NoHeaders      bool
-	AllNamespaces  bool
-	ShowLabels     bool
-	Wide           bool
-	ShowKind       bool
-	ShowNamespace  bool
-	SortBy         string
-	SingleResource bool
-	GetArgs        map[string]map[string]struct{}
+	Namespace         string
+	Output            string
+	LabelSelector     string
+	NoHeaders         bool
+	AllNamespaces     bool
+	ShowLabels        bool
+	Wide              bool
+	ShowKind          bool
+	ShowNamespace     bool
+	SortBy            string
+	SingleResource    bool
+	ShowManagedFields bool
+	GetArgs           map[string]map[string]struct{}
 }
 
 func newOptions() Options {
