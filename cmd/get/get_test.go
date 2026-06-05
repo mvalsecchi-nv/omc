@@ -97,6 +97,47 @@ func TestGetClusterScopedResources_ReturnsErrorOnCorruptYAML(t *testing.T) {
 	}
 }
 
+func TestGetClusterScopedResources_AcceptsListInPerResourceDir(t *testing.T) {
+	root := t.TempDir()
+	rdir := filepath.Join(root, "cluster-scoped-resources", "config.openshift.io", "clusterversions")
+	if err := os.MkdirAll(rdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fixture := []byte(`apiVersion: v1
+kind: List
+items:
+- apiVersion: config.openshift.io/v1
+  kind: ClusterVersion
+  metadata:
+    name: version-a
+- apiVersion: config.openshift.io/v1
+  kind: ClusterVersion
+  metadata:
+    name: version-b
+`)
+	if err := os.WriteFile(filepath.Join(rdir, "clusterversions.yaml"), fixture, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	saved := vars.MustGatherRootPath
+	t.Cleanup(func() { vars.MustGatherRootPath = saved })
+	vars.MustGatherRootPath = root
+
+	opts := newOptions()
+	s := newState(&opts)
+	if err := getClusterScopedResources(s, "clusterversions", "config.openshift.io", nil); err != nil {
+		t.Fatalf("getClusterScopedResources: %v", err)
+	}
+	var out, errOut bytes.Buffer
+	if err := s.handleOutput(&out, &errOut); err != nil {
+		t.Fatalf("handleOutput: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "version-a") || !strings.Contains(got, "version-b") {
+		t.Fatalf("expected both items in output, got:\n%s", got)
+	}
+}
+
 func TestGetCmd_PropagatesErrorThroughCobra(t *testing.T) {
 	root := t.TempDir()
 	rdir := filepath.Join(root, "cluster-scoped-resources", "config.openshift.io")
