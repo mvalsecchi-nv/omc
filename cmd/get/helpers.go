@@ -35,7 +35,7 @@ func validateArgs(opts *Options, args []string) error {
 			opts.ShowKind = true
 			resourcesTypes := strings.Split(strings.TrimPrefix(strings.TrimSuffix(args[0], ","), ","), ",")
 			for _, resourceType := range resourcesTypes {
-				resourceNamePlural, resourceGroup, _, _, err := KindGroupNamespaced(resourceType)
+				resourceNamePlural, resourceGroup, _, _, err := KindGroupNamespaced(resourceType, opts.RootPath)
 				if err == nil {
 					if !strings.Contains(resourceType, ".") {
 						opts.GetArgs[resourceNamePlural+"."+resourceGroup] = make(map[string]struct{})
@@ -49,7 +49,7 @@ func validateArgs(opts *Options, args []string) error {
 			}
 		} else {
 			resourceType := args[0]
-			resourceNamePlural, resourceGroup, _, _, err := KindGroupNamespaced(resourceType)
+			resourceNamePlural, resourceGroup, _, _, err := KindGroupNamespaced(resourceType, opts.RootPath)
 			if err == nil {
 				if !strings.Contains(resourceType, ".") {
 					opts.GetArgs[resourceNamePlural+"."+resourceGroup] = make(map[string]struct{})
@@ -68,7 +68,7 @@ func validateArgs(opts *Options, args []string) error {
 			if strings.Contains(arg, "/") {
 				resource := strings.Split(arg, "/")
 				resourceType, resourceName := resource[0], resource[1]
-				resourceNamePlural, resourceGroup, _, _, err := KindGroupNamespaced(resourceType)
+				resourceNamePlural, resourceGroup, _, _, err := KindGroupNamespaced(resourceType, opts.RootPath)
 				if err == nil {
 					_, ok := opts.GetArgs[resourceNamePlural+"."+resourceGroup]
 					if !ok {
@@ -89,7 +89,7 @@ func validateArgs(opts *Options, args []string) error {
 		}
 	} else if len(args) > 1 && !strings.Contains(args[0], "/") {
 		resourceType := args[0]
-		resourceNamePlural, resourceGroup, _, _, err := KindGroupNamespaced(resourceType)
+		resourceNamePlural, resourceGroup, _, _, err := KindGroupNamespaced(resourceType, opts.RootPath)
 		if err == nil {
 			opts.GetArgs[resourceNamePlural+"."+resourceGroup] = make(map[string]struct{})
 		} else {
@@ -108,7 +108,7 @@ func validateArgs(opts *Options, args []string) error {
 	return nil
 }
 
-func KindGroupNamespaced(alias string) (string, string, string, bool, error) {
+func KindGroupNamespaced(alias, rootPath string) (string, string, string, bool, error) {
 	// when it si called the second time
 	if strings.Contains(alias, ".") {
 		split := strings.Split(alias, ".")
@@ -138,11 +138,11 @@ func KindGroupNamespaced(alias string) (string, string, string, bool, error) {
 		return resourceNamePlural, resourceGroup, resourceNameSingular, namespaced, nil
 	} else {
 		klog.V(3).Info("INFO ", fmt.Sprintf("Alias \"%s\" resource not known.", alias))
-		return kindGroupNamespacedFromCrds(alias)
+		return kindGroupNamespacedFromCrds(alias, rootPath)
 	}
 }
 
-func kindGroupNamespacedFromCrds(alias string) (string, string, string, bool, error) {
+func kindGroupNamespacedFromCrds(alias, rootPath string) (string, string, string, bool, error) {
 	crdCache.Lock()
 	defer crdCache.Unlock()
 	if vars.AliasToCrd == nil {
@@ -153,8 +153,8 @@ func kindGroupNamespacedFromCrds(alias string) (string, string, string, bool, er
 		namespaced := crd.Spec.Scope == "Namespaced"
 		return crd.Spec.Names.Plural, crd.Spec.Group, crd.Spec.Names.Singular, namespaced, nil
 	}
-	crdsPath := vars.MustGatherRootPath + "/cluster-scoped-resources/apiextensions.k8s.io/customresourcedefinitions/"
-	bundleCRDs, hit := crdCache.byRoot[vars.MustGatherRootPath]
+	crdsPath := rootPath + "/cluster-scoped-resources/apiextensions.k8s.io/customresourcedefinitions/"
+	bundleCRDs, hit := crdCache.byRoot[rootPath]
 	if !hit {
 		var cacheReady bool
 		if ok, _ := Exists(crdsPath); ok {
@@ -180,7 +180,7 @@ func kindGroupNamespacedFromCrds(alias string) (string, string, string, bool, er
 			cacheReady = true
 		}
 		if cacheReady {
-			crdCache.byRoot[vars.MustGatherRootPath] = bundleCRDs
+			crdCache.byRoot[rootPath] = bundleCRDs
 		}
 	}
 	for _, _crd := range bundleCRDs {

@@ -21,17 +21,12 @@ func TestKindGroupNamespacedFromCrds_LazyInitsAliasToCrd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	saved := vars.MustGatherRootPath
 	savedMap := vars.AliasToCrd
-	t.Cleanup(func() {
-		vars.MustGatherRootPath = saved
-		vars.AliasToCrd = savedMap
-	})
-	vars.MustGatherRootPath = root
+	t.Cleanup(func() { vars.AliasToCrd = savedMap })
 	vars.AliasToCrd = nil
 
 	// The call will return an error (no CRDs found), which is expected.
-	_, _, _, _, _ = kindGroupNamespacedFromCrds("nonexistent")
+	_, _, _, _, _ = kindGroupNamespacedFromCrds("nonexistent", root)
 
 	if vars.AliasToCrd == nil {
 		t.Fatal("expected AliasToCrd to be initialized, got nil")
@@ -45,19 +40,16 @@ func TestKindGroupNamespacedFromCrds_HomedirGate(t *testing.T) {
 	// return an error and must not fall back to the homedir.
 	root := t.TempDir() // bundle root with no CRD directory
 
-	savedRoot := vars.MustGatherRootPath
 	savedAlias := vars.AliasToCrd
 	savedUseLocal := vars.UseLocalCRDs
 	t.Cleanup(func() {
-		vars.MustGatherRootPath = savedRoot
 		vars.AliasToCrd = savedAlias
 		vars.UseLocalCRDs = savedUseLocal
 	})
-	vars.MustGatherRootPath = root
 	vars.AliasToCrd = nil
 	vars.UseLocalCRDs = false
 
-	_, _, _, _, err := kindGroupNamespacedFromCrds("someresource")
+	_, _, _, _, err := kindGroupNamespacedFromCrds("someresource", root)
 	if err == nil {
 		t.Error("expected error when bundle CRD path is empty and UseLocalCRDs is false, got nil")
 	}
@@ -96,20 +88,17 @@ spec:
 		t.Fatal(err)
 	}
 
-	savedRoot := vars.MustGatherRootPath
 	savedAlias := vars.AliasToCrd
 	t.Cleanup(func() {
-		vars.MustGatherRootPath = savedRoot
 		vars.AliasToCrd = savedAlias
 		crdCache.Lock()
 		delete(crdCache.byRoot, root)
 		crdCache.Unlock()
 		os.Chmod(crdFile, 0o644)
 	})
-	vars.MustGatherRootPath = root
 	vars.AliasToCrd = nil
 
-	plural1, group1, _, _, err := kindGroupNamespacedFromCrds("widget")
+	plural1, group1, _, _, err := kindGroupNamespacedFromCrds("widget", root)
 	if err != nil {
 		t.Fatalf("first call: %v", err)
 	}
@@ -121,7 +110,7 @@ spec:
 	// Reset AliasToCrd so the function cannot short-circuit through it.
 	vars.AliasToCrd = nil
 
-	plural2, group2, _, _, err := kindGroupNamespacedFromCrds("widget")
+	plural2, group2, _, _, err := kindGroupNamespacedFromCrds("widget", root)
 	if err != nil {
 		t.Fatalf("second call (expected cache hit): %v", err)
 	}
