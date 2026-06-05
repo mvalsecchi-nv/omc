@@ -40,6 +40,29 @@ func TestKindGroupNamespacedFromCrds_LazyInitsAliasToCrd(t *testing.T) {
 	vars.AliasToCrd["test"] = apiextensionsv1.CustomResourceDefinition{}
 }
 
+func TestKindGroupNamespacedFromCrds_HomedirGate(t *testing.T) {
+	// With UseLocalCRDs=false and no CRDs in the bundle path the function must
+	// return an error and must not fall back to the homedir.
+	root := t.TempDir() // bundle root with no CRD directory
+
+	savedRoot := vars.MustGatherRootPath
+	savedAlias := vars.AliasToCrd
+	savedUseLocal := vars.UseLocalCRDs
+	t.Cleanup(func() {
+		vars.MustGatherRootPath = savedRoot
+		vars.AliasToCrd = savedAlias
+		vars.UseLocalCRDs = savedUseLocal
+	})
+	vars.MustGatherRootPath = root
+	vars.AliasToCrd = nil
+	vars.UseLocalCRDs = false
+
+	_, _, _, _, err := kindGroupNamespacedFromCrds("someresource")
+	if err == nil {
+		t.Error("expected error when bundle CRD path is empty and UseLocalCRDs is false, got nil")
+	}
+}
+
 func TestReadDirForResources(t *testing.T) {
 	tests := []struct {
 		name     string
