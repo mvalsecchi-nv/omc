@@ -48,10 +48,13 @@ var Logs = &cobra.Command{
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		namespaceFlag, _ := cmd.Flags().GetString("namespace")
+		namespace := vars.Namespace
 		if namespaceFlag != "" {
-			vars.Namespace = namespaceFlag
+			namespace = namespaceFlag
 		}
 		opts := Options{
+			RootPath:      vars.MustGatherRootPath,
+			Namespace:     namespace,
 			Container:     containerFlag,
 			Previous:      previousFlag,
 			Rotated:       rotatedFlag,
@@ -64,12 +67,12 @@ var Logs = &cobra.Command{
 }
 
 func Run(stdout, stderr io.Writer, opts Options, args []string) error {
-	if vars.MustGatherRootPath == "" {
+	if opts.RootPath == "" {
 		return fmt.Errorf("there are no must-gather resources defined")
 	}
-	exist, _ := helpers.Exists(vars.MustGatherRootPath + "/namespaces")
+	exist, _ := helpers.Exists(opts.RootPath + "/namespaces")
 	if !exist {
-		files, err := os.ReadDir(vars.MustGatherRootPath)
+		files, err := os.ReadDir(opts.RootPath)
 		if err != nil {
 			return err
 		}
@@ -77,7 +80,7 @@ func Run(stdout, stderr io.Writer, opts Options, args []string) error {
 		for _, f := range files {
 			if strings.HasPrefix(f.Name(), "quay") {
 				QuayString = f.Name()
-				vars.MustGatherRootPath = vars.MustGatherRootPath + "/" + QuayString
+				opts.RootPath = opts.RootPath + "/" + QuayString
 				break
 			}
 		}
@@ -101,10 +104,10 @@ func Run(stdout, stderr io.Writer, opts Options, args []string) error {
 			if podName == "" {
 				return fmt.Errorf("arguments in resource/name form must have a single resource and name")
 			}
-			return logsPods(stdout, vars.MustGatherRootPath, vars.Namespace, podName, containerName, opts.Previous, opts.Rotated, opts.AllContainers, logLevels, opts.Insecure, opts.Tail)
+			return logsPods(stdout, opts.RootPath, opts.Namespace, podName, containerName, opts.Previous, opts.Rotated, opts.AllContainers, logLevels, opts.Insecure, opts.Tail)
 		} else {
 			podName = s[0]
-			return logsPods(stdout, vars.MustGatherRootPath, vars.Namespace, podName, containerName, opts.Previous, opts.Rotated, opts.AllContainers, logLevels, opts.Insecure, opts.Tail)
+			return logsPods(stdout, opts.RootPath, opts.Namespace, podName, containerName, opts.Previous, opts.Rotated, opts.AllContainers, logLevels, opts.Insecure, opts.Tail)
 		}
 	}
 	if len(args) == 2 {
@@ -117,7 +120,7 @@ func Run(stdout, stderr io.Writer, opts Options, args []string) error {
 					return fmt.Errorf("arguments in resource/name form must have a single resource and name")
 				}
 				containerName = args[1]
-				return logsPods(stdout, vars.MustGatherRootPath, vars.Namespace, podName, containerName, opts.Previous, opts.Rotated, opts.AllContainers, logLevels, opts.Insecure, opts.Tail)
+				return logsPods(stdout, opts.RootPath, opts.Namespace, podName, containerName, opts.Previous, opts.Rotated, opts.AllContainers, logLevels, opts.Insecure, opts.Tail)
 			}
 		} else {
 			if containerName != "" {
@@ -125,7 +128,7 @@ func Run(stdout, stderr io.Writer, opts Options, args []string) error {
 			} else {
 				podName = args[0]
 				containerName = args[1]
-				return logsPods(stdout, vars.MustGatherRootPath, vars.Namespace, podName, containerName, opts.Previous, opts.Rotated, opts.AllContainers, logLevels, opts.Insecure, opts.Tail)
+				return logsPods(stdout, opts.RootPath, opts.Namespace, podName, containerName, opts.Previous, opts.Rotated, opts.AllContainers, logLevels, opts.Insecure, opts.Tail)
 			}
 		}
 	}

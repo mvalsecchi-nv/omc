@@ -21,6 +21,7 @@ package get
 // populated either from cobra-bound flag values or from upstream defaults
 // before Run is invoked.
 type Options struct {
+	RootPath          string
 	Namespace         string
 	Output            string
 	LabelSelector     string

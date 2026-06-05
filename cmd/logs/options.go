@@ -19,6 +19,8 @@ package logs
 // Lifting these out of vars makes the logs entry point reentrant so a
 // library caller can invoke Run concurrently from multiple goroutines.
 type Options struct {
+	RootPath      string
+	Namespace     string
 	Container     string
 	Previous      bool
 	Rotated       bool
