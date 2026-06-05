@@ -9,26 +9,37 @@ import (
 	"strings"
 	"time"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/kubernetes/pkg/printers"
 
-	//"github.com/gmeghnag/vars/types"
-
 	helpers "github.com/gmeghnag/omc/cmd/helpers"
 	"github.com/gmeghnag/omc/vars"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
-func CustomColumnsTable(unstruct *unstructured.Unstructured) (*metav1.Table, error) {
+// DisplayConfig carries the per-invocation display settings that the table
+// generator needs. Passing it as a value rather than reading from vars makes
+// the functions safe to call concurrently from multiple goroutines.
+type DisplayConfig struct {
+	Wide           bool
+	ShowKind       bool
+	ShowNamespace  bool
+	ShowLabels     bool
+	Namespace      string
+	Output         string
+	TableGenerator *printers.HumanReadableGenerator
+	AliasToCrd     map[string]apiextensionsv1.CustomResourceDefinition
+}
+
+func CustomColumnsTable(unstruct *unstructured.Unstructured, cfg DisplayConfig) (*metav1.Table, error) {
 	// Matches .metadata.name and metadata.name formats
 	format := regexp.MustCompile(`^\.?([^{}]+)$`)
 	fieldSelectors := map[string]string{}
 	prefix := "custom-columns="
 	table := &metav1.Table{}
-	args := vars.OutputStringVar[len(prefix):]
+	args := cfg.Output[len(prefix):]
 	fields := strings.Split(args, ",")
 
 	for _, field := range fields {
@@ -55,11 +66,11 @@ func CustomColumnsTable(unstruct *unstructured.Unstructured) (*metav1.Table, err
 	return table, nil
 }
 
-func InternalResourceTable(runtimeObject runtime.Object, unstruct *unstructured.Unstructured) (*metav1.Table, error) {
+func InternalResourceTable(runtimeObject runtime.Object, unstruct *unstructured.Unstructured, cfg DisplayConfig) (*metav1.Table, error) {
 	resourceKind := strings.ToLower(unstruct.GetKind())
-	table, err := vars.TableGenerator.GenerateTable(runtimeObject, printers.GenerateOptions{Wide: vars.Wide, NoHeaders: false})
+	table, err := cfg.TableGenerator.GenerateTable(runtimeObject, printers.GenerateOptions{Wide: cfg.Wide, NoHeaders: false})
 	if err != nil {
-		return InternalUnstructuredApiResource(*unstruct)
+		return InternalUnstructuredApiResource(*unstruct, cfg)
 	}
 	for i, column := range table.ColumnDefinitions {
 		if column.Name == "Age" {
@@ -83,7 +94,7 @@ func InternalResourceTable(runtimeObject runtime.Object, unstruct *unstructured.
 		}
 	}
 	if table.ColumnDefinitions[0].Name == "Name" {
-		if vars.ShowKind {
+		if cfg.ShowKind {
 			table.Rows[0].Cells[0] = resourceKind + "/" + unstruct.GetName()
 		} else {
 			table.Rows[0].Cells[0] = unstruct.GetName()
@@ -113,11 +124,11 @@ func InternalResourceTable(runtimeObject runtime.Object, unstruct *unstructured.
 		table.Rows[0].Cells[0] = lastSeen
 	}
 
-	if vars.ShowNamespace {
+	if cfg.ShowNamespace {
 		table.ColumnDefinitions = append([]metav1.TableColumnDefinition{{Format: "string", Name: "Namespace"}}, table.ColumnDefinitions...)
 		table.Rows[0].Cells = append([]interface{}{unstruct.GetNamespace()}, table.Rows[0].Cells...)
 	}
-	if vars.ShowLabelsBoolVar {
+	if cfg.ShowLabels {
 		table.ColumnDefinitions = append(table.ColumnDefinitions, metav1.TableColumnDefinition{Format: "string", Name: "Labels"})
 		labels := helpers.ExtractLabels(unstruct.GetLabels())
 		table.Rows[0].Cells = append(table.Rows[0].Cells, labels)
@@ -125,16 +136,16 @@ func InternalResourceTable(runtimeObject runtime.Object, unstruct *unstructured.
 	return table, err
 }
 
-func InternalUnstructuredApiResource(unstruct unstructured.Unstructured) (*metav1.Table, error) {
+func InternalUnstructuredApiResource(unstruct unstructured.Unstructured, cfg DisplayConfig) (*metav1.Table, error) {
 	resourceKind := strings.ToLower(unstruct.GetKind())
 	table := &metav1.Table{}
-	if vars.ShowNamespace && unstruct.GetNamespace() != "" {
+	if cfg.ShowNamespace && unstruct.GetNamespace() != "" {
 		table.ColumnDefinitions = []metav1.TableColumnDefinition{
 			{Name: "Namespace", Type: "string", Format: "name"},
 			{Name: "Name", Type: "string", Format: "string"},
 			{Name: "Created At", Type: "date"},
 		}
-		if vars.ShowKind || vars.Namespace == "" {
+		if cfg.ShowKind || cfg.Namespace == "" {
 			table.Rows = []metav1.TableRow{{Cells: []interface{}{unstruct.GetNamespace(), resourceKind + "." + strings.Split(unstruct.GetAPIVersion(), "/")[0] + "/" + unstruct.GetName(), unstruct.GetCreationTimestamp().Time.UTC().Format("2006-01-02T15:04:05")}}}
 		} else {
 			table.Rows = []metav1.TableRow{{Cells: []interface{}{unstruct.GetNamespace(), unstruct.GetName(), unstruct.GetCreationTimestamp().Time.UTC().Format("2006-01-02T15:04:05")}}}
@@ -145,7 +156,7 @@ func InternalUnstructuredApiResource(unstruct unstructured.Unstructured) (*metav
 			{Name: "Name", Type: "string", Format: "name"},
 			{Name: "Created At", Type: "date"},
 		}
-		if vars.ShowKind || vars.Namespace == "" {
+		if cfg.ShowKind || cfg.Namespace == "" {
 			table.Rows = []metav1.TableRow{{Cells: []interface{}{resourceKind + "." + strings.Split(unstruct.GetAPIVersion(), "/")[0] + "/" + unstruct.GetName(), unstruct.GetCreationTimestamp().Time.UTC().Format("2006-01-02T15:04:05")}}}
 
 		} else {
@@ -156,18 +167,18 @@ func InternalUnstructuredApiResource(unstruct unstructured.Unstructured) (*metav
 	return table, nil
 }
 
-func GenerateCustomResourceTable(unstruct unstructured.Unstructured) (*metav1.Table, error) {
+func GenerateCustomResourceTable(unstruct unstructured.Unstructured, cfg DisplayConfig) (*metav1.Table, error) {
 	resourceKind := strings.ToLower(unstruct.GetKind())
 	table := &metav1.Table{}
-	vars.CRD = nil
-	crd, ok := vars.AliasToCrd[resourceKind+"."+strings.Split(unstruct.GetAPIVersion(), "/")[0]]
-	if ok {
-		vars.CRD = &apiextensionsv1.CustomResourceDefinition{Spec: crd.Spec}
+	var crdSpec *apiextensionsv1.CustomResourceDefinitionSpec
+	if crd, ok := cfg.AliasToCrd[resourceKind+"."+strings.Split(unstruct.GetAPIVersion(), "/")[0]]; ok {
+		spec := crd.Spec
+		crdSpec = &spec
 	}
 
 	cells := []interface{}{}
-	if vars.ShowKind == true {
-		if vars.ShowNamespace && unstruct.GetNamespace() != "" {
+	if cfg.ShowKind {
+		if cfg.ShowNamespace && unstruct.GetNamespace() != "" {
 			table.ColumnDefinitions = []metav1.TableColumnDefinition{{Name: "Namespace", Format: "string"}, {Name: "Name", Format: "name"}}
 			cells = []interface{}{unstruct.GetNamespace(), resourceKind + "/" + unstruct.GetName()}
 		} else {
@@ -175,7 +186,7 @@ func GenerateCustomResourceTable(unstruct unstructured.Unstructured) (*metav1.Ta
 			cells = []interface{}{resourceKind + "/" + unstruct.GetName()}
 		}
 	} else {
-		if vars.ShowNamespace && unstruct.GetNamespace() != "" {
+		if cfg.ShowNamespace && unstruct.GetNamespace() != "" {
 			table.ColumnDefinitions = []metav1.TableColumnDefinition{{Name: "Namespace", Format: "string"}, {Name: "Name", Format: "name"}}
 			cells = []interface{}{unstruct.GetNamespace(), unstruct.GetName()}
 		} else {
@@ -183,35 +194,40 @@ func GenerateCustomResourceTable(unstruct unstructured.Unstructured) (*metav1.Ta
 			cells = []interface{}{unstruct.GetName()}
 		}
 	}
-	for i, column := range vars.CRD.Spec.Versions {
-		if (vars.CRD.Spec.Group + "/" + column.Name) == unstruct.GetAPIVersion() {
-			if len(vars.CRD.Spec.Versions[i].AdditionalPrinterColumns) > 0 {
-				for _, column := range vars.CRD.Spec.Versions[i].AdditionalPrinterColumns {
-					table.ColumnDefinitions = append(table.ColumnDefinitions, metav1.TableColumnDefinition{Name: column.Name, Format: "string"})
-					if column.Name == "Age" {
-						cells = append(cells, helpers.TranslateTimestamp(unstruct.GetCreationTimestamp()))
-						continue
+	if crdSpec != nil {
+		for i, column := range crdSpec.Versions {
+			if (crdSpec.Group + "/" + column.Name) == unstruct.GetAPIVersion() {
+				if len(crdSpec.Versions[i].AdditionalPrinterColumns) > 0 {
+					for _, column := range crdSpec.Versions[i].AdditionalPrinterColumns {
+						table.ColumnDefinitions = append(table.ColumnDefinitions, metav1.TableColumnDefinition{Name: column.Name, Format: "string"})
+						if column.Name == "Age" {
+							cells = append(cells, helpers.TranslateTimestamp(unstruct.GetCreationTimestamp()))
+							continue
+						}
+						if column.Name == "Since" {
+							v := helpers.GetFromJsonPath(unstruct.Object, fmt.Sprintf("%s%s%s", "{", column.JSONPath, "}"))
+							parsedTime, _ := time.Parse(time.RFC3339, v)
+							metav1Time := metav1.Time{Time: parsedTime}
+							v = helpers.TranslateTimestamp(metav1Time)
+							cells = append(cells, v)
+						} else {
+							v := helpers.GetFromJsonPath(unstruct.Object, fmt.Sprintf("%s%s%s", "{", column.JSONPath, "}"))
+							cells = append(cells, v)
+						}
 					}
-					if column.Name == "Since" {
-						v := helpers.GetFromJsonPath(unstruct.Object, fmt.Sprintf("%s%s%s", "{", column.JSONPath, "}"))
-						parsedTime, _ := time.Parse(time.RFC3339, v)
-						metav1Time := metav1.Time{Time: parsedTime}
-						v = helpers.TranslateTimestamp(metav1Time)
-						cells = append(cells, v)
-					} else {
-						v := helpers.GetFromJsonPath(unstruct.Object, fmt.Sprintf("%s%s%s", "{", column.JSONPath, "}"))
-						cells = append(cells, v)
-					}
+				} else {
+					table.ColumnDefinitions = append(table.ColumnDefinitions, metav1.TableColumnDefinition{Name: "Age", Format: "string"})
+					cells = append(cells, helpers.TranslateTimestamp(unstruct.GetCreationTimestamp()))
 				}
-			} else {
-				table.ColumnDefinitions = append(table.ColumnDefinitions, metav1.TableColumnDefinition{Name: "Age", Format: "string"})
-				cells = append(cells, helpers.TranslateTimestamp(unstruct.GetCreationTimestamp()))
+				break
 			}
-			break
 		}
+	} else {
+		table.ColumnDefinitions = append(table.ColumnDefinitions, metav1.TableColumnDefinition{Name: "Age", Format: "string"})
+		cells = append(cells, helpers.TranslateTimestamp(unstruct.GetCreationTimestamp()))
 	}
 	table.Rows = []metav1.TableRow{{Cells: cells}}
-	if vars.ShowLabelsBoolVar {
+	if cfg.ShowLabels {
 		table.ColumnDefinitions = append(table.ColumnDefinitions, metav1.TableColumnDefinition{Format: "string", Name: "Labels"})
 		labels := helpers.ExtractLabels(unstruct.GetLabels())
 		table.Rows[0].Cells = append(table.Rows[0].Cells, labels)

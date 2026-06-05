@@ -77,9 +77,11 @@ var yamlData []byte
 // Flag binding targets. Cobra binds flags to variable addresses, so these
 // stay as package vars. RunE copies them into an Options for Run.
 var (
-	labelSelectorFlag string
-	noHeadersFlag     bool
-	sortByFlag        string
+	labelSelectorFlag     string
+	noHeadersFlag         bool
+	sortByFlag            string
+	showLabelsFlag        bool
+	showManagedFieldsFlag bool
 )
 
 // state holds the per-invocation accumulator fields that handleObject and
@@ -104,6 +106,19 @@ func newState(opts *Options) *state {
 	}
 }
 
+func (s *state) displayConfig() tablegenerator.DisplayConfig {
+	return tablegenerator.DisplayConfig{
+		Wide:           s.opts.Wide,
+		ShowKind:       s.opts.ShowKind,
+		ShowNamespace:  s.opts.ShowNamespace,
+		ShowLabels:     s.opts.ShowLabels,
+		Namespace:      s.opts.Namespace,
+		Output:         s.opts.Output,
+		TableGenerator: vars.TableGenerator,
+		AliasToCrd:     vars.AliasToCrd,
+	}
+}
+
 var GetCmd = &cobra.Command{
 	Use:          "get",
 	Short:        "Get kubernetes/openshift object in tabular format or wide|yaml|json|jsonpath|custom-columns.",
@@ -113,14 +128,15 @@ var GetCmd = &cobra.Command{
 			return cmd.Help()
 		}
 		opts := Options{
-			Namespace:     vars.Namespace,
-			Output:        vars.OutputStringVar,
-			LabelSelector: labelSelectorFlag,
-			NoHeaders:     noHeadersFlag,
-			AllNamespaces: vars.AllNamespaceBoolVar,
-			ShowLabels:    vars.ShowLabelsBoolVar,
-			SortBy:        sortByFlag,
-			GetArgs:       make(map[string]map[string]struct{}),
+			Namespace:         vars.Namespace,
+			Output:            vars.OutputStringVar,
+			LabelSelector:     labelSelectorFlag,
+			NoHeaders:         noHeadersFlag,
+			AllNamespaces:     vars.AllNamespaceBoolVar,
+			ShowLabels:        showLabelsFlag,
+			ShowManagedFields: showManagedFieldsFlag,
+			SortBy:            sortByFlag,
+			GetArgs:           make(map[string]map[string]struct{}),
 		}
 		return Run(cmd.OutOrStdout(), cmd.ErrOrStderr(), opts, args)
 	},
@@ -136,13 +152,6 @@ func Run(stdout, stderr io.Writer, opts Options, args []string) error {
 	if err := validateArgs(&opts, args); err != nil {
 		return err
 	}
-	// tablegenerator still reads these from vars; bridge until that package
-	// is converted to take options too.
-	vars.Wide = opts.Wide
-	vars.ShowKind = opts.ShowKind
-	vars.OutputStringVar = opts.Output
-	vars.Namespace = opts.Namespace
-	vars.ShowLabelsBoolVar = opts.ShowLabels
 	s := newState(&opts)
 	for resource := range opts.GetArgs {
 		resourceNamePlural, resourceGroup, _, namespaced, err := KindGroupNamespaced(resource)
@@ -172,8 +181,8 @@ func Run(stdout, stderr io.Writer, opts Options, args []string) error {
 func init() {
 	GetCmd.PersistentFlags().BoolVarP(&vars.AllNamespaceBoolVar, "all-namespaces", "A", false, "If present, list the requested object(s) across all namespaces.")
 	GetCmd.PersistentFlags().BoolVar(&noHeadersFlag, "no-headers", false, "When using the default or custom-column output format, don't print headers (default print headers).")
-	GetCmd.PersistentFlags().BoolVar(&vars.ShowManagedFields, "show-managed-fields", false, "If true, show the managedFields when printing objects in JSON or YAML format.")
-	GetCmd.PersistentFlags().BoolVarP(&vars.ShowLabelsBoolVar, "show-labels", "", false, "When printing, show all labels as the last column (default hide labels column)")
+	GetCmd.PersistentFlags().BoolVar(&showManagedFieldsFlag, "show-managed-fields", false, "If true, show the managedFields when printing objects in JSON or YAML format.")
+	GetCmd.PersistentFlags().BoolVarP(&showLabelsFlag, "show-labels", "", false, "When printing, show all labels as the last column (default hide labels column)")
 	GetCmd.PersistentFlags().StringVarP(&vars.OutputStringVar, "output", "o", "", "Output format. One of: json|yaml|wide|jsonpath|custom-columns=...")
 	GetCmd.PersistentFlags().StringVarP(&labelSelectorFlag, "selector", "l", "", "selector (label query) to filter on, supports '=', '==', and '!='.(e.g. -l key1=value1,key2=value2)")
 	GetCmd.PersistentFlags().StringVarP(&sortByFlag, "sort-by", "", "", "If non-empty, sort list types using this field specification. The field specification is expressed as a JSONPath expression (e.g. '{.metadata.name}').")
@@ -253,7 +262,6 @@ func getNamespacedResources(s *state, resourceNamePlural string, resourceGroup s
 	if s.opts.AllNamespaces {
 		s.opts.Namespace = ""
 		s.opts.ShowNamespace = true
-		vars.ShowNamespace = true
 		_namespaces, _ := ReadDirForResources(vars.MustGatherRootPath + "/namespaces/")
 		for _, f := range _namespaces {
 			namespaces = append(namespaces, f.Name())
@@ -523,14 +531,14 @@ func (s *state) handleObject(obj unstructured.Unstructured) error {
 	}
 	s.lastKind = obj.GetKind()
 	if s.opts.Output == "yaml" || s.opts.Output == "json" {
-		if !vars.ShowManagedFields {
+		if !s.opts.ShowManagedFields {
 			obj.SetManagedFields(nil)
 		}
 		s.unstructuredList.Items = append(s.unstructuredList.Items, obj)
 		return nil
 	}
 	if strings.HasPrefix(s.opts.Output, "jsonpath=") {
-		if !vars.ShowManagedFields {
+		if !s.opts.ShowManagedFields {
 			obj.SetManagedFields(nil)
 		}
 		s.unstructuredList.Items = append(s.unstructuredList.Items, obj)
@@ -552,8 +560,9 @@ func (s *state) handleObject(obj unstructured.Unstructured) error {
 	}
 	klog.V(3).Info("INFO deserializing ", obj.GetKind(), " ", obj.GetName())
 	var objectTable *metav1.Table
+	cfg := s.displayConfig()
 	if strings.HasPrefix(s.opts.Output, "custom-columns=") {
-		objectTable, err = tablegenerator.CustomColumnsTable(&obj)
+		objectTable, err = tablegenerator.CustomColumnsTable(&obj, cfg)
 		if err != nil {
 			klog.V(1).ErrorS(err, err.Error())
 			return err
@@ -565,14 +574,14 @@ func (s *state) handleObject(obj unstructured.Unstructured) error {
 			if err := yaml.Unmarshal(rawObject, runtimeObjectType); err != nil {
 				klog.V(3).Info(err, err.Error())
 			}
-			objectTable, err = tablegenerator.InternalResourceTable(runtimeObjectType, &obj)
+			objectTable, err = tablegenerator.InternalResourceTable(runtimeObjectType, &obj, cfg)
 			if err != nil {
 				klog.V(3).Info("INFO ", fmt.Sprintf("%s: %s, %s", err.Error(), obj.GetKind(), obj.GetAPIVersion()))
 				klog.V(1).ErrorS(err, err.Error())
 				return err
 			}
 		} else {
-			objectTable, err = tablegenerator.GenerateCustomResourceTable(obj)
+			objectTable, err = tablegenerator.GenerateCustomResourceTable(obj, cfg)
 			if err != nil {
 				klog.V(1).ErrorS(err, err.Error())
 				return err
