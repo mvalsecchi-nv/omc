@@ -146,6 +146,9 @@ func KindGroupNamespaced(alias string) (string, string, string, bool, error) {
 }
 
 func kindGroupNamespacedFromCrds(alias string) (string, string, string, bool, error) {
+	if vars.AliasToCrd == nil {
+		vars.AliasToCrd = make(map[string]apiextensionsv1.CustomResourceDefinition)
+	}
 	crdsPath := vars.MustGatherRootPath + "/cluster-scoped-resources/apiextensions.k8s.io/customresourcedefinitions/"
 	if ok, _ := Exists(crdsPath); ok {
 		crds, rErr := ReadDirForResources(crdsPath)

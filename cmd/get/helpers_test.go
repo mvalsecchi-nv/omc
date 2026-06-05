@@ -2,11 +2,43 @@ package get
 
 import (
 	"io/fs"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"testing"
 	"testing/fstest"
+
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+
+	"github.com/gmeghnag/omc/vars"
 )
+
+func TestKindGroupNamespacedFromCrds_LazyInitsAliasToCrd(t *testing.T) {
+	root := t.TempDir()
+	crdsDir := filepath.Join(root, "cluster-scoped-resources", "apiextensions.k8s.io", "customresourcedefinitions")
+	if err := os.MkdirAll(crdsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	saved := vars.MustGatherRootPath
+	savedMap := vars.AliasToCrd
+	t.Cleanup(func() {
+		vars.MustGatherRootPath = saved
+		vars.AliasToCrd = savedMap
+	})
+	vars.MustGatherRootPath = root
+	vars.AliasToCrd = nil
+
+	// The call will return an error (no CRDs found), which is expected.
+	_, _, _, _, _ = kindGroupNamespacedFromCrds("nonexistent")
+
+	if vars.AliasToCrd == nil {
+		t.Fatal("expected AliasToCrd to be initialized, got nil")
+	}
+	// Confirm the type is correct by assigning a value.
+	vars.AliasToCrd["test"] = apiextensionsv1.CustomResourceDefinition{}
+}
 
 func TestReadDirForResources(t *testing.T) {
 	tests := []struct {
