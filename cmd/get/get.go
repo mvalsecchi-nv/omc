@@ -460,7 +460,28 @@ func getClusterScopedResources(s *state, resourceNamePlural string, resourceGrou
 				return fmt.Errorf("error unmarshaling %s: %w", resourceYamlPath, err)
 			}
 			if item.IsList() {
-				return fmt.Errorf("file %q contains a \"List\" objectKind, while it should contain a single resource", resourceYamlPath)
+				var listItems types.UnstructuredList
+				if err := yaml.Unmarshal(_file, &listItems); err != nil {
+					return fmt.Errorf("error unmarshaling list in %s: %w", resourceYamlPath, err)
+				}
+				for _, listItem := range listItems.Items {
+					if s.opts.SortBy != "" {
+						UnstructuredItems.Items = append(UnstructuredItems.Items, listItem)
+					} else {
+						if len(resources) > 0 {
+							if _, ok := resources[listItem.GetName()]; ok {
+								if err := s.handleObject(listItem); err != nil {
+									return err
+								}
+							}
+						} else {
+							if err := s.handleObject(listItem); err != nil {
+								return err
+							}
+						}
+					}
+				}
+				continue
 			}
 			if s.opts.SortBy != "" {
 				UnstructuredItems.Items = append(UnstructuredItems.Items, item)
