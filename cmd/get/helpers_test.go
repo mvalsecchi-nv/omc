@@ -63,6 +63,73 @@ func TestKindGroupNamespacedFromCrds_HomedirGate(t *testing.T) {
 	}
 }
 
+func TestKindGroupNamespacedFromCrds_Cache(t *testing.T) {
+	// Two calls with the same MustGatherRootPath should return the same result.
+	// After the first call the CRD file is made unreadable; the second call
+	// must still succeed, proving the result came from the in-memory cache.
+	root := t.TempDir()
+	crdsDir := filepath.Join(root, "cluster-scoped-resources", "apiextensions.k8s.io", "customresourcedefinitions")
+	if err := os.MkdirAll(crdsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	crdYAML := `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  names:
+    kind: Widget
+    plural: widgets
+    singular: widget
+  scope: Namespaced
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+`
+	crdFile := filepath.Join(crdsDir, "widgets.example.com.yaml")
+	if err := os.WriteFile(crdFile, []byte(crdYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	savedRoot := vars.MustGatherRootPath
+	savedAlias := vars.AliasToCrd
+	t.Cleanup(func() {
+		vars.MustGatherRootPath = savedRoot
+		vars.AliasToCrd = savedAlias
+		crdCache.Lock()
+		delete(crdCache.byRoot, root)
+		crdCache.Unlock()
+		os.Chmod(crdFile, 0o644)
+	})
+	vars.MustGatherRootPath = root
+	vars.AliasToCrd = nil
+
+	plural1, group1, _, _, err := kindGroupNamespacedFromCrds("widget")
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+
+	// Make the CRD file unreadable so a second disk read would fail.
+	if err := os.Chmod(crdFile, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	// Reset AliasToCrd so the function cannot short-circuit through it.
+	vars.AliasToCrd = nil
+
+	plural2, group2, _, _, err := kindGroupNamespacedFromCrds("widget")
+	if err != nil {
+		t.Fatalf("second call (expected cache hit): %v", err)
+	}
+	if plural1 != plural2 || group1 != group2 {
+		t.Errorf("results differ: %q/%q vs %q/%q", plural1, group1, plural2, group2)
+	}
+}
+
 func TestReadDirForResources(t *testing.T) {
 	tests := []struct {
 		name     string
