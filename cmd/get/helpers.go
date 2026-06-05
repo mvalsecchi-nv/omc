@@ -138,25 +138,22 @@ func KindGroupNamespaced(alias string) (string, string, string, bool, error) {
 		return resourceNamePlural, resourceGroup, resourceNameSingular, namespaced, nil
 	} else {
 		klog.V(3).Info("INFO ", fmt.Sprintf("Alias \"%s\" resource not known.", alias))
-		crd, ok := vars.AliasToCrd[alias]
-		if ok {
-			_crd := &apiextensionsv1.CustomResourceDefinition{Spec: crd.Spec}
-			namespaced := false
-			if _crd.Spec.Scope == "Namespaced" {
-				namespaced = true
-			}
-			return _crd.Spec.Names.Plural, _crd.Spec.Group, _crd.Spec.Names.Singular, namespaced, nil
-		}
 		return kindGroupNamespacedFromCrds(alias)
 	}
 }
 
 func kindGroupNamespacedFromCrds(alias string) (string, string, string, bool, error) {
+	crdCache.Lock()
+	defer crdCache.Unlock()
 	if vars.AliasToCrd == nil {
 		vars.AliasToCrd = make(map[string]apiextensionsv1.CustomResourceDefinition)
 	}
+	// Fast path: alias was resolved in a previous call and cached.
+	if crd, ok := vars.AliasToCrd[alias]; ok {
+		namespaced := crd.Spec.Scope == "Namespaced"
+		return crd.Spec.Names.Plural, crd.Spec.Group, crd.Spec.Names.Singular, namespaced, nil
+	}
 	crdsPath := vars.MustGatherRootPath + "/cluster-scoped-resources/apiextensions.k8s.io/customresourcedefinitions/"
-	crdCache.Lock()
 	bundleCRDs, hit := crdCache.byRoot[vars.MustGatherRootPath]
 	if !hit {
 		var cacheReady bool
@@ -186,7 +183,6 @@ func kindGroupNamespacedFromCrds(alias string) (string, string, string, bool, er
 			crdCache.byRoot[vars.MustGatherRootPath] = bundleCRDs
 		}
 	}
-	crdCache.Unlock()
 	for _, _crd := range bundleCRDs {
 		if strings.Contains(alias, ".") {
 			split := strings.Split(alias, ".")
