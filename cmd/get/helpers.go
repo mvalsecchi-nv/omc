@@ -201,6 +201,9 @@ func kindGroupNamespacedFromCrds(alias string) (string, string, string, bool, er
 			fmt.Fprintln(os.Stderr, rErr)
 		}
 		for _, f := range crds {
+			if f.IsDir() {
+				continue
+			}
 			crdYamlPath := omcCrdsPath + f.Name()
 			crdByte, _ := ioutil.ReadFile(crdYamlPath)
 			_crd := &apiextensionsv1.CustomResourceDefinition{}
