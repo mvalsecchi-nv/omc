@@ -17,13 +17,14 @@ package logs
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	v1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
 )
 
-func logsPods(currentContextPath string, defaultConfigNamespace string, podName string, containerName string, previousFlag bool, rotatedFlag bool, allContainersFlag bool, logLevels []string, insecureFlag bool, tail int64) error {
+func logsPods(stdout io.Writer, currentContextPath string, defaultConfigNamespace string, podName string, containerName string, previousFlag bool, rotatedFlag bool, allContainersFlag bool, logLevels []string, insecureFlag bool, tail int64) error {
 	var logFilter logLineFilter = NewCRILogFilter(logLevels, nil)
 	var _Items v1.PodList
 	CurrentNamespacePath := currentContextPath + "/namespaces/" + defaultConfigNamespace
@@ -71,7 +72,7 @@ func logsPods(currentContextPath string, defaultConfigNamespace string, podName 
 					if insecureFlag {
 						log.FromInsecure()
 					}
-					if err := log.Read(os.Stdout); err != nil {
+					if err := log.Read(stdout); err != nil {
 						return err
 					}
 				}
@@ -116,7 +117,7 @@ func logsPods(currentContextPath string, defaultConfigNamespace string, podName 
 			if insecureFlag {
 				log.FromInsecure()
 			}
-			if err := log.Read(os.Stdout); err != nil {
+			if err := log.Read(stdout); err != nil {
 				return err
 			}
 		}

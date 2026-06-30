@@ -18,6 +18,7 @@ package logs
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -81,7 +82,7 @@ func TestLogsPodsReturnsErrors(t *testing.T) {
 	t.Run("missing pod", func(t *testing.T) {
 		root := writePodsListFixture(t, podListYAML("other-pod", "test-container"))
 
-		err := logsPods(root, "test-namespace", "test-pod", "", false, false, false, nil, false, -1)
+		err := logsPods(io.Discard, root, "test-namespace", "test-pod", "", false, false, false, nil, false, -1)
 		if err == nil {
 			t.Fatalf("expected missing pod error, got nil")
 		}
@@ -93,7 +94,7 @@ func TestLogsPodsReturnsErrors(t *testing.T) {
 	t.Run("invalid container", func(t *testing.T) {
 		root := writePodsListFixture(t, podListYAML("test-pod", "test-container"))
 
-		err := logsPods(root, "test-namespace", "test-pod", "missing-container", false, false, false, nil, false, -1)
+		err := logsPods(io.Discard, root, "test-namespace", "test-pod", "missing-container", false, false, false, nil, false, -1)
 		if err == nil {
 			t.Fatalf("expected invalid container error, got nil")
 		}
@@ -105,7 +106,7 @@ func TestLogsPodsReturnsErrors(t *testing.T) {
 	t.Run("corrupt pods list", func(t *testing.T) {
 		root := writePodsListFixture(t, "{ unterminated")
 
-		err := logsPods(root, "test-namespace", "test-pod", "", false, false, false, nil, false, -1)
+		err := logsPods(io.Discard, root, "test-namespace", "test-pod", "", false, false, false, nil, false, -1)
 		if err == nil {
 			t.Fatalf("expected corrupt pods list error, got nil")
 		}
@@ -124,7 +125,7 @@ func TestLogsPodsReturnsErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err := logsPods(root, "test-namespace", "test-pod", "", false, false, false, nil, false, -1)
+		err := logsPods(io.Discard, root, "test-namespace", "test-pod", "", false, false, false, nil, false, -1)
 		if err == nil {
 			t.Fatalf("expected corrupt fallback pod error, got nil")
 		}

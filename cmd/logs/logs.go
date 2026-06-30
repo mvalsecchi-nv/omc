@@ -17,6 +17,7 @@ package logs
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -34,81 +35,85 @@ var Logs = &cobra.Command{
 	Short:        "Print the logs for a container in a pod",
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if vars.MustGatherRootPath == "" {
-			return fmt.Errorf("there are no must-gather resources defined")
-		}
-		exist, _ := helpers.Exists(vars.MustGatherRootPath + "/namespaces")
-		if !exist {
-			files, err := os.ReadDir(vars.MustGatherRootPath)
-			if err != nil {
-				return err
-			}
-			var QuayString string
-			for _, f := range files {
-				if strings.HasPrefix(f.Name(), "quay") {
-					QuayString = f.Name()
-					vars.MustGatherRootPath = vars.MustGatherRootPath + "/" + QuayString
-					break
-				}
-			}
-			if QuayString == "" {
-				return fmt.Errorf("wrong must-gather file composition")
-			}
-		}
 		namespaceFlag, _ := cmd.Flags().GetString("namespace")
 		if namespaceFlag != "" {
 			vars.Namespace = namespaceFlag
 		}
-		podName := ""
-		containerName, _ := cmd.Flags().GetString("container")
-		previousFlag, _ := cmd.Flags().GetBool("previous")
-		rotatedFlag, _ := cmd.Flags().GetBool("rotated")
-		insecureFlag, _ := cmd.Flags().GetBool("insecure")
-		allContainersFlag, _ := cmd.Flags().GetBool("all-containers")
-		logLevels := []string{}
-		if LogLevel != "" {
-			logLevels = strings.Split(LogLevel, ",")
-		}
+		return Run(cmd.OutOrStdout(), cmd.ErrOrStderr(), args)
+	},
+}
 
-		if len(args) == 0 || len(args) > 2 {
-			return fmt.Errorf("expected 'logs [-p] (POD | TYPE/NAME) [-c CONTAINER]'; POD or TYPE/NAME is a required argument for the logs command")
+func Run(stdout, stderr io.Writer, args []string) error {
+	if vars.MustGatherRootPath == "" {
+		return fmt.Errorf("there are no must-gather resources defined")
+	}
+	exist, _ := helpers.Exists(vars.MustGatherRootPath + "/namespaces")
+	if !exist {
+		files, err := os.ReadDir(vars.MustGatherRootPath)
+		if err != nil {
+			return err
 		}
-		if len(args) == 1 {
-			if s := strings.Split(args[0], "/"); len(s) == 2 && (s[0] == "po" || s[0] == "pod" || s[0] == "pods") {
+		var QuayString string
+		for _, f := range files {
+			if strings.HasPrefix(f.Name(), "quay") {
+				QuayString = f.Name()
+				vars.MustGatherRootPath = vars.MustGatherRootPath + "/" + QuayString
+				break
+			}
+		}
+		if QuayString == "" {
+			return fmt.Errorf("wrong must-gather file composition")
+		}
+	}
+	podName := ""
+	containerName := vars.Container
+	previousFlag := vars.Previous
+	rotatedFlag := vars.Rotated
+	insecureFlag := vars.InsecureLogs
+	allContainersFlag := vars.AllContainers
+	logLevels := []string{}
+	if LogLevel != "" {
+		logLevels = strings.Split(LogLevel, ",")
+	}
+
+	if len(args) == 0 || len(args) > 2 {
+		return fmt.Errorf("expected 'logs [-p] (POD | TYPE/NAME) [-c CONTAINER]'; POD or TYPE/NAME is a required argument for the logs command")
+	}
+	if len(args) == 1 {
+		if s := strings.Split(args[0], "/"); len(s) == 2 && (s[0] == "po" || s[0] == "pod" || s[0] == "pods") {
+			podName = s[1]
+			if podName == "" {
+				return fmt.Errorf("arguments in resource/name form must have a single resource and name")
+			}
+			return logsPods(stdout, vars.MustGatherRootPath, vars.Namespace, podName, containerName, previousFlag, rotatedFlag, allContainersFlag, logLevels, insecureFlag, vars.Tail)
+		} else {
+			podName = s[0]
+			return logsPods(stdout, vars.MustGatherRootPath, vars.Namespace, podName, containerName, previousFlag, rotatedFlag, allContainersFlag, logLevels, insecureFlag, vars.Tail)
+		}
+	}
+	if len(args) == 2 {
+		if s := strings.Split(args[0], "/"); len(s) == 2 && (s[0] == "po" || s[0] == "pod" || s[0] == "pods") {
+			if containerName != "" {
+				return fmt.Errorf("only one of -c or an inline [CONTAINER] arg is allowed")
+			} else {
 				podName = s[1]
 				if podName == "" {
 					return fmt.Errorf("arguments in resource/name form must have a single resource and name")
 				}
-				return logsPods(vars.MustGatherRootPath, vars.Namespace, podName, containerName, previousFlag, rotatedFlag, allContainersFlag, logLevels, insecureFlag, vars.Tail)
+				containerName = args[1]
+				return logsPods(stdout, vars.MustGatherRootPath, vars.Namespace, podName, containerName, previousFlag, rotatedFlag, allContainersFlag, logLevels, insecureFlag, vars.Tail)
+			}
+		} else {
+			if containerName != "" {
+				return fmt.Errorf("only one of -c or an inline [CONTAINER] arg is allowed")
 			} else {
-				podName = s[0]
-				return logsPods(vars.MustGatherRootPath, vars.Namespace, podName, containerName, previousFlag, rotatedFlag, allContainersFlag, logLevels, insecureFlag, vars.Tail)
+				podName = args[0]
+				containerName = args[1]
+				return logsPods(stdout, vars.MustGatherRootPath, vars.Namespace, podName, containerName, previousFlag, rotatedFlag, allContainersFlag, logLevels, insecureFlag, vars.Tail)
 			}
 		}
-		if len(args) == 2 {
-			if s := strings.Split(args[0], "/"); len(s) == 2 && (s[0] == "po" || s[0] == "pod" || s[0] == "pods") {
-				if containerName != "" {
-					return fmt.Errorf("only one of -c or an inline [CONTAINER] arg is allowed")
-				} else {
-					podName = s[1]
-					if podName == "" {
-						return fmt.Errorf("arguments in resource/name form must have a single resource and name")
-					}
-					containerName = args[1]
-					return logsPods(vars.MustGatherRootPath, vars.Namespace, podName, containerName, previousFlag, rotatedFlag, allContainersFlag, logLevels, insecureFlag, vars.Tail)
-				}
-			} else {
-				if containerName != "" {
-					return fmt.Errorf("only one of -c or an inline [CONTAINER] arg is allowed")
-				} else {
-					podName = args[0]
-					containerName = args[1]
-					return logsPods(vars.MustGatherRootPath, vars.Namespace, podName, containerName, previousFlag, rotatedFlag, allContainersFlag, logLevels, insecureFlag, vars.Tail)
-				}
-			}
-		}
-		return nil
-	},
+	}
+	return nil
 }
 
 func init() {
