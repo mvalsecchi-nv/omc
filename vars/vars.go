@@ -7,13 +7,12 @@ import (
 )
 
 var CfgFile, Namespace, MustGatherRootPath, OutputStringVar, Id, Container, OMCVersionHash, OMCVersionTag, DiffCmd, DefaultProject, ForResource string
-var AllNamespaceBoolVar, ShowLabelsBoolVar, UseLocalCRDs, Wide, ShowKind, ShowNamespace, ShowManagedFields bool
+var AllNamespaceBoolVar, UseLocalCRDs bool
 
 var EventTypes []string
 var AliasToCrd map[string]apiextensionsv1.CustomResourceDefinition
 var ArgPresent map[string]bool
 var KnownResources map[string]map[string]interface{}
 var TableGenerator *printers.HumanReadableGenerator
-var CRD *apiextensionsv1.CustomResourceDefinition
 
 var Schema *runtime.Scheme

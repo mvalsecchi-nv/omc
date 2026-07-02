@@ -18,18 +18,19 @@ package get
 // Options holds the configuration for a single get invocation. Fields are
 // populated from the cobra-bound flags before Run is invoked.
 type Options struct {
-	Namespace      string
-	Output         string
-	LabelSelector  string
-	NoHeaders      bool
-	AllNamespaces  bool
-	ShowLabels     bool
-	Wide           bool
-	ShowKind       bool
-	ShowNamespace  bool
-	SortBy         string
-	SingleResource bool
-	GetArgs        map[string]map[string]struct{}
+	Namespace         string
+	Output            string
+	LabelSelector     string
+	NoHeaders         bool
+	AllNamespaces     bool
+	ShowLabels        bool
+	Wide              bool
+	ShowKind          bool
+	ShowNamespace     bool
+	SortBy            string
+	SingleResource    bool
+	ShowManagedFields bool
+	GetArgs           map[string]map[string]struct{}
 }
 
 func newOptions() Options {
