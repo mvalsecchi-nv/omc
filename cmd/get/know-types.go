@@ -38,6 +38,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	quotav1 "github.com/openshift/api/quota/v1"
 	securityv1 "github.com/openshift/api/security/v1"
+  userv1 "github.com/openshift/api/user/v1"
 	imagev1 "github.com/openshift/openshift-apiserver/pkg/image/apis/image"
 	projectv1helpers "github.com/openshift/openshift-apiserver/pkg/project/apis/project"
 	"github.com/openshift/openshift-apiserver/pkg/route/apis/route"
@@ -429,4 +430,15 @@ func addOAuthV1Types(scheme *runtime.Scheme) error {
 	}
 	scheme.AddKnownTypes(GroupVersion, types...)
 	return nil
+}
+
+func addUserV1Types(scheme *runtime.Scheme) error {
+  GroupVersion := schema.GroupVersion{Group: "user.openshift.io", Version: "v1"}                                                                                                                                                        
+  types := []runtime.Object{                                                                                                                                                                                                            
+    &userv1.User{},                                                                                                                                                                                                               
+    &userv1.Group{},                                                                                                                                                                                                              
+    &userv1.Identity{},                                                                                                                                                                                                           
+  }
+  scheme.AddKnownTypes(GroupVersion, types...)                                                                                                                                                                                          
+  return nil
 }

@@ -46,6 +46,7 @@ import (
 	// cliprint "k8s.io/cli-runtime/pkg/printers"
 	quotav1 "github.com/openshift/api/quota/v1"
 	securityv1 "github.com/openshift/api/security/v1"
+  userv1 "github.com/openshift/api/user/v1"
 	"github.com/openshift/openshift-apiserver/pkg/route/apis/route"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 
@@ -230,6 +231,12 @@ func RawObjectToRuntimeObject(rawObject []byte, schema *runtime.Scheme) runtime.
 		return &template.Template{}
 	case *oauthapi.OAuthClient:
 		return &oauthapi.OAuthClient{}
+  case *userv1.User:
+    return &userv1.User{}
+  case *userv1.Group:
+    return &userv1.Group{}
+  case *userv1.Identity:
+    return &userv1.Identity{}
 	}
 	//fmt.Println("RUNTIME UNKNOW")
 	return &runtime.Unknown{}
