@@ -195,8 +195,6 @@ func init() {
 }
 
 func init() {
-	vars.AliasToCrd = make(map[string]apiextensionsv1.CustomResourceDefinition)
-	vars.ArgPresent = make(map[string]bool)
 	vars.KnownResources = make(map[string]map[string]interface{})
 	err := goyaml.Unmarshal(yamlData, vars.KnownResources)
 	if err != nil {

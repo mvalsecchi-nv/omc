@@ -113,17 +113,10 @@ func validateArgs(opts *Options, args []string) error {
 }
 
 // KindGroupNamespaced resolves an alias against the known resources, then the
-// CRDs under rootPath. For back-compat it still lazy-inits and populates the
-// exported vars.AliasToCrd. The get path uses kindGroupNamespaced with a per-Run
-// map instead, so concurrent Run callers against different roots stay isolated.
+// CRDs under rootPath. The get path uses kindGroupNamespaced with a per-Run map
+// so concurrent Run callers against different roots stay isolated.
 func KindGroupNamespaced(alias, rootPath string) (string, string, string, bool, error) {
-	crdCache.Lock()
-	if vars.AliasToCrd == nil {
-		vars.AliasToCrd = make(map[string]apiextensionsv1.CustomResourceDefinition)
-	}
-	aliasCache := vars.AliasToCrd
-	crdCache.Unlock()
-	return kindGroupNamespaced(alias, rootPath, aliasCache)
+	return kindGroupNamespaced(alias, rootPath, nil)
 }
 
 func kindGroupNamespaced(alias, rootPath string, aliasCache map[string]apiextensionsv1.CustomResourceDefinition) (string, string, string, bool, error) {
@@ -163,8 +156,8 @@ func kindGroupNamespaced(alias, rootPath string, aliasCache map[string]apiextens
 func kindGroupNamespacedFromCrds(alias, rootPath string, aliasCache map[string]apiextensionsv1.CustomResourceDefinition) (string, string, string, bool, error) {
 	crdCache.Lock()
 	defer crdCache.Unlock()
-	// A nil map (uninitialized global or a caller with no cache) gets a throwaway
-	// so the writes below do not panic.
+	// A nil map (a caller that keeps no cache) gets a throwaway so the writes
+	// below do not panic.
 	if aliasCache == nil {
 		aliasCache = make(map[string]apiextensionsv1.CustomResourceDefinition)
 	}
