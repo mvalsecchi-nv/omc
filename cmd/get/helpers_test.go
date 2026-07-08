@@ -9,30 +9,28 @@ import (
 	"testing"
 	"testing/fstest"
 
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-
 	"github.com/gmeghnag/omc/vars"
 )
 
-func TestKindGroupNamespacedFromCrds_LazyInitsAliasToCrd(t *testing.T) {
+func TestKindGroupNamespacedFromCrds_NilAliasCache(t *testing.T) {
+	// External callers pass nil. The function must not panic on the writes it
+	// does while scanning CRDs.
 	root := t.TempDir()
 	crdsDir := filepath.Join(root, "cluster-scoped-resources", "apiextensions.k8s.io", "customresourcedefinitions")
 	if err := os.MkdirAll(crdsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	savedMap := vars.AliasToCrd
-	t.Cleanup(func() { vars.AliasToCrd = savedMap })
-	vars.AliasToCrd = nil
+	t.Cleanup(func() {
+		crdCache.Lock()
+		delete(crdCache.byRoot, root)
+		crdCache.Unlock()
+	})
 
-	// The call will return an error (no CRDs found), which is expected.
-	_, _, _, _, _ = kindGroupNamespacedFromCrds("nonexistent", root)
-
-	if vars.AliasToCrd == nil {
-		t.Fatal("expected AliasToCrd to be initialized, got nil")
+	// No CRDs on disk, so this returns an error rather than panicking.
+	if _, _, _, _, err := kindGroupNamespacedFromCrds("nonexistent", root, nil); err == nil {
+		t.Error("expected error when no CRD matches, got nil")
 	}
-	// Confirm the type is correct by assigning a value.
-	vars.AliasToCrd["test"] = apiextensionsv1.CustomResourceDefinition{}
 }
 
 func TestKindGroupNamespacedFromCrds_HomedirGate(t *testing.T) {
@@ -40,16 +38,16 @@ func TestKindGroupNamespacedFromCrds_HomedirGate(t *testing.T) {
 	// return an error and must not fall back to the homedir.
 	root := t.TempDir() // bundle root with no CRD directory
 
-	savedAlias := vars.AliasToCrd
 	savedUseLocal := vars.UseLocalCRDs
 	t.Cleanup(func() {
-		vars.AliasToCrd = savedAlias
 		vars.UseLocalCRDs = savedUseLocal
+		crdCache.Lock()
+		delete(crdCache.byRoot, root)
+		crdCache.Unlock()
 	})
-	vars.AliasToCrd = nil
 	vars.UseLocalCRDs = false
 
-	_, _, _, _, err := kindGroupNamespacedFromCrds("someresource", root)
+	_, _, _, _, err := kindGroupNamespacedFromCrds("someresource", root, nil)
 	if err == nil {
 		t.Error("expected error when bundle CRD path is empty and UseLocalCRDs is false, got nil")
 	}
@@ -88,17 +86,14 @@ spec:
 		t.Fatal(err)
 	}
 
-	savedAlias := vars.AliasToCrd
 	t.Cleanup(func() {
-		vars.AliasToCrd = savedAlias
 		crdCache.Lock()
 		delete(crdCache.byRoot, root)
 		crdCache.Unlock()
 		os.Chmod(crdFile, 0o644)
 	})
-	vars.AliasToCrd = nil
 
-	plural1, group1, _, _, err := kindGroupNamespacedFromCrds("widget", root)
+	plural1, group1, _, _, err := kindGroupNamespacedFromCrds("widget", root, nil)
 	if err != nil {
 		t.Fatalf("first call: %v", err)
 	}
@@ -107,10 +102,9 @@ spec:
 	if err := os.Chmod(crdFile, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	// Reset AliasToCrd so the function cannot short-circuit through it.
-	vars.AliasToCrd = nil
-
-	plural2, group2, _, _, err := kindGroupNamespacedFromCrds("widget", root)
+	// A fresh alias map means no fast path, so a second success proves
+	// crdCache.byRoot served the parsed CRD without touching disk.
+	plural2, group2, _, _, err := kindGroupNamespacedFromCrds("widget", root, nil)
 	if err != nil {
 		t.Fatalf("second call (expected cache hit): %v", err)
 	}

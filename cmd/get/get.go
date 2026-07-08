@@ -96,6 +96,9 @@ type state struct {
 	lastKind         string
 	unstructuredList types.UnstructuredList
 	jsonPathList     types.JsonPathList
+	// crds maps this call's resolved aliases to their CRDs for rendering. Private
+	// to one Run, so the lock-free reads below are safe.
+	crds map[string]apiextensionsv1.CustomResourceDefinition
 }
 
 func newState(opts *Options) *state {
@@ -103,6 +106,7 @@ func newState(opts *Options) *state {
 		opts:             opts,
 		unstructuredList: types.UnstructuredList{Kind: "List", ApiVersion: "v1", Items: []unstructured.Unstructured{}},
 		jsonPathList:     types.JsonPathList{Kind: "List", ApiVersion: "v1"},
+		crds:             make(map[string]apiextensionsv1.CustomResourceDefinition),
 	}
 }
 
@@ -116,7 +120,7 @@ func (s *state) displayConfig() tablegenerator.DisplayConfig {
 		Output:         s.opts.Output,
 		RootPath:       s.opts.RootPath,
 		TableGenerator: vars.TableGenerator,
-		AliasToCrd:     vars.AliasToCrd,
+		AliasToCrd:     s.crds,
 	}
 }
 
@@ -156,7 +160,7 @@ func Run(stdout, stderr io.Writer, opts Options, args []string) error {
 	}
 	s := newState(&opts)
 	for resource := range opts.GetArgs {
-		resourceNamePlural, resourceGroup, _, namespaced, err := KindGroupNamespaced(resource, s.opts.RootPath)
+		resourceNamePlural, resourceGroup, _, namespaced, err := kindGroupNamespaced(resource, s.opts.RootPath, s.crds)
 		if err != nil {
 			klog.V(1).ErrorS(err, "ERROR")
 			return err
@@ -242,7 +246,7 @@ func init() {
 	_ = addStorageV1B1Types(vars.Schema)
 	_ = addTemplateV1Types(vars.Schema)
 	_ = addOAuthV1Types(vars.Schema)
-  _ = addUserV1Types(vars.Schema)
+	_ = addUserV1Types(vars.Schema)
 	utilruntime.Must(schemeBuilder.AddToScheme(vars.Schema))
 
 	vars.TableGenerator = printers.NewTableGenerator()
@@ -639,7 +643,7 @@ func (s *state) handleOutput(w io.Writer, errOut io.Writer) error {
 	for resource := range s.opts.GetArgs {
 		_resources = append(_resources, resource)
 		// if at least one resource is cluster-scoped, never include a namespace in the output if no resources are found of the kind
-		_, _, _, namespaced, _ := KindGroupNamespaced(resource, s.opts.RootPath)
+		_, _, _, namespaced, _ := kindGroupNamespaced(resource, s.opts.RootPath, s.crds)
 		if !namespaced {
 			includesClusterScoped = true
 		}
