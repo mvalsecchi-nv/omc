@@ -240,7 +240,8 @@ func init() {
 	_ = addStorageV1B1Types(vars.Schema)
 	_ = addTemplateV1Types(vars.Schema)
 	_ = addOAuthV1Types(vars.Schema)
-  _ = addUserV1Types(vars.Schema)
+	_ = addMetrics(vars.Schema)
+	_ = addUserV1Types(vars.Schema)
 	utilruntime.Must(schemeBuilder.AddToScheme(vars.Schema))
 
 	vars.TableGenerator = printers.NewTableGenerator()
