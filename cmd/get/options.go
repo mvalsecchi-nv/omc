@@ -19,6 +19,7 @@ package get
 // populated from the cobra-bound flags before Run is invoked.
 type Options struct {
 	Namespace         string
+	NamespaceExplicit bool
 	Output            string
 	LabelSelector     string
 	NoHeaders         bool
