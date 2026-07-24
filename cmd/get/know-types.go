@@ -28,16 +28,19 @@ import (
 	eventsv1 "k8s.io/api/events/v1"
 	discovery "k8s.io/kubernetes/pkg/apis/discovery"
 	storage "k8s.io/kubernetes/pkg/apis/storage"
+	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 
 	templateapi "github.com/openshift/openshift-apiserver/pkg/template/apis/template"
 
 	"github.com/openshift/openshift-apiserver/pkg/build/apis/build"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	authorizationv1 "github.com/openshift/api/authorization/v1"
 	configv1 "github.com/openshift/api/config/v1"
 	quotav1 "github.com/openshift/api/quota/v1"
 	securityv1 "github.com/openshift/api/security/v1"
+  userv1 "github.com/openshift/api/user/v1"
 	imagev1 "github.com/openshift/openshift-apiserver/pkg/image/apis/image"
 	projectv1helpers "github.com/openshift/openshift-apiserver/pkg/project/apis/project"
 	"github.com/openshift/openshift-apiserver/pkg/route/apis/route"
@@ -261,6 +264,19 @@ func addAppsTypes(scheme *runtime.Scheme) error {
 	return nil
 }
 
+func addMetrics(scheme *runtime.Scheme) error {
+	GroupVersion := schema.GroupVersion{Group: "metrics.k8s.io", Version: "v1beta1"}
+	types := []runtime.Object{
+		&metricsv1beta1.NodeMetrics{},
+		&metricsv1beta1.NodeMetricsList{},
+		&metricsv1beta1.PodMetrics{},
+		&metricsv1beta1.PodMetricsList{},
+	}
+	scheme.AddKnownTypes(GroupVersion, types...)
+	metav1.AddToGroupVersion(scheme, GroupVersion)
+	return nil
+}
+
 func addNetworkingTypes(scheme *runtime.Scheme) error {
 	GroupVersion := schema.GroupVersion{Group: "networking.k8s.io", Version: "v1"}
 	types := []runtime.Object{
@@ -429,4 +445,15 @@ func addOAuthV1Types(scheme *runtime.Scheme) error {
 	}
 	scheme.AddKnownTypes(GroupVersion, types...)
 	return nil
+}
+
+func addUserV1Types(scheme *runtime.Scheme) error {
+  GroupVersion := schema.GroupVersion{Group: "user.openshift.io", Version: "v1"}                                                                                                                                                        
+  types := []runtime.Object{                                                                                                                                                                                                            
+    &userv1.User{},                                                                                                                                                                                                               
+    &userv1.Group{},                                                                                                                                                                                                              
+    &userv1.Identity{},                                                                                                                                                                                                           
+  }
+  scheme.AddKnownTypes(GroupVersion, types...)                                                                                                                                                                                          
+  return nil
 }

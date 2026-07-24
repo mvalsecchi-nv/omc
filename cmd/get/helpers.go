@@ -15,7 +15,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-func validateArgs(args []string) error {
+func validateArgs(opts *Options, args []string) error {
 	if len(args) == 1 && args[0] == "all" {
 		args = []string{"pods.core,services.core,daemonsets.apps,deployments.apps,replicasets.apps,statefulsets.apps,replicationcontrollers.core,deploymentconfigs.apps.openshift.io,builds.build.openshift.io,buildconfigs.build.openshift.io,jobs.batch,cronjobs.batch,routes.route.openshift.io,ingresses.networking.k8s.io,"}
 	}
@@ -26,15 +26,15 @@ func validateArgs(args []string) error {
 	args = _args
 	if len(args) == 1 && !strings.Contains(args[0], "/") {
 		if strings.Contains(args[0], ",") {
-			vars.ShowKind = true
+			opts.ShowKind = true
 			resourcesTypes := strings.Split(strings.TrimPrefix(strings.TrimSuffix(args[0], ","), ","), ",")
 			for _, resourceType := range resourcesTypes {
 				resourceNamePlural, resourceGroup, _, _, err := KindGroupNamespaced(resourceType)
 				if err == nil {
 					if !strings.Contains(resourceType, ".") {
-						vars.GetArgs[resourceNamePlural+"."+resourceGroup] = make(map[string]struct{})
+						opts.GetArgs[resourceNamePlural+"."+resourceGroup] = make(map[string]struct{})
 					} else {
-						vars.GetArgs[resourceType] = make(map[string]struct{})
+						opts.GetArgs[resourceType] = make(map[string]struct{})
 					}
 				} else {
 					return fmt.Errorf("resource type \"%s\" not known.", resourceType)
@@ -46,9 +46,9 @@ func validateArgs(args []string) error {
 			resourceNamePlural, resourceGroup, _, _, err := KindGroupNamespaced(resourceType)
 			if err == nil {
 				if !strings.Contains(resourceType, ".") {
-					vars.GetArgs[resourceNamePlural+"."+resourceGroup] = make(map[string]struct{})
+					opts.GetArgs[resourceNamePlural+"."+resourceGroup] = make(map[string]struct{})
 				} else {
-					vars.GetArgs[resourceType] = make(map[string]struct{})
+					opts.GetArgs[resourceType] = make(map[string]struct{})
 				}
 			} else {
 				return fmt.Errorf("resource type \"%s\" not known.", resourceType)
@@ -56,7 +56,7 @@ func validateArgs(args []string) error {
 		}
 	} else if len(args) > 0 && strings.Contains(args[0], "/") {
 		if len(args) == 1 {
-			vars.SingleResource = true
+			opts.SingleResource = true
 		}
 		for _, arg := range args {
 			if strings.Contains(arg, "/") {
@@ -64,12 +64,12 @@ func validateArgs(args []string) error {
 				resourceType, resourceName := resource[0], resource[1]
 				resourceNamePlural, resourceGroup, _, _, err := KindGroupNamespaced(resourceType)
 				if err == nil {
-					_, ok := vars.GetArgs[resourceNamePlural+"."+resourceGroup]
+					_, ok := opts.GetArgs[resourceNamePlural+"."+resourceGroup]
 					if !ok {
-						vars.GetArgs[resourceNamePlural+"."+resourceGroup] = make(map[string]struct{})
-						vars.GetArgs[resourceNamePlural+"."+resourceGroup][resourceName] = struct{}{}
+						opts.GetArgs[resourceNamePlural+"."+resourceGroup] = make(map[string]struct{})
+						opts.GetArgs[resourceNamePlural+"."+resourceGroup][resourceName] = struct{}{}
 					} else {
-						vars.GetArgs[resourceNamePlural+"."+resourceGroup][resourceName] = struct{}{}
+						opts.GetArgs[resourceNamePlural+"."+resourceGroup][resourceName] = struct{}{}
 					}
 				} else {
 					return fmt.Errorf("resource type \"%s\" not known.", resourceType)
@@ -78,25 +78,25 @@ func validateArgs(args []string) error {
 				return fmt.Errorf("there is no need to specify a resource type as a separate argument when passing arguments in resource/name form (e.g. 'omc get resource/<resource_name>' instead of 'omc get resource resource/<resource_name>'")
 			}
 		}
-		if len(vars.GetArgs) > 1 {
-			vars.ShowKind = true
+		if len(opts.GetArgs) > 1 {
+			opts.ShowKind = true
 		}
 	} else if len(args) > 1 && !strings.Contains(args[0], "/") {
 		resourceType := args[0]
 		resourceNamePlural, resourceGroup, _, _, err := KindGroupNamespaced(resourceType)
 		if err == nil {
-			vars.GetArgs[resourceNamePlural+"."+resourceGroup] = make(map[string]struct{})
+			opts.GetArgs[resourceNamePlural+"."+resourceGroup] = make(map[string]struct{})
 		} else {
 			return fmt.Errorf("resource type \"%s\" not known.", resourceType)
 		}
 		if len(args[0:]) == 2 {
-			vars.SingleResource = true
+			opts.SingleResource = true
 		}
 		for _, resourceName := range args[1:] {
 			if strings.Contains(resourceName, "/") {
 				return fmt.Errorf("there is no need to specify a resource type as a separate argument when passing arguments in resource/name form (e.g. 'omc get resource/<resource_name>' instead of 'omc get resource resource/<resource_name>'")
 			}
-			vars.GetArgs[resourceNamePlural+"."+resourceGroup][resourceName] = struct{}{}
+			opts.GetArgs[resourceNamePlural+"."+resourceGroup][resourceName] = struct{}{}
 		}
 	}
 	return nil
@@ -201,6 +201,9 @@ func kindGroupNamespacedFromCrds(alias string) (string, string, string, bool, er
 			fmt.Fprintln(os.Stderr, rErr)
 		}
 		for _, f := range crds {
+			if f.IsDir() {
+				continue
+			}
 			crdYamlPath := omcCrdsPath + f.Name()
 			crdByte, _ := ioutil.ReadFile(crdYamlPath)
 			_crd := &apiextensionsv1.CustomResourceDefinition{}

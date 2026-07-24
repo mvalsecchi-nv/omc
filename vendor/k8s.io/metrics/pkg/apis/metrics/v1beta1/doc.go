@@ -1,6 +1,5 @@
 /*
-Copyright © 2021 NAME HERE <EMAIL ADDRESS>
-Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+Copyright 2017 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,12 +13,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package main
 
-import (
-	"github.com/gmeghnag/omc/root"
-)
+// +k8s:deepcopy-gen=package
+// +k8s:protobuf-gen=package
+// +k8s:conversion-gen=k8s.io/metrics/pkg/apis/metrics
+// +k8s:openapi-gen=true
+// +groupName=metrics.k8s.io
 
-func main() {
-	root.Execute()
-}
+// Package v1beta1 is the v1beta1 version of the metrics API.
+package v1beta1 // import "k8s.io/metrics/pkg/apis/metrics/v1beta1"
