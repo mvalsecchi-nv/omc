@@ -20,6 +20,7 @@ package get
 type Options struct {
 	RootPath          string
 	Namespace         string
+	NamespaceExplicit bool
 	Output            string
 	LabelSelector     string
 	NoHeaders         bool

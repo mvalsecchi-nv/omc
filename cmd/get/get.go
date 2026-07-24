@@ -135,6 +135,7 @@ var GetCmd = &cobra.Command{
 		opts := Options{
 			RootPath:          vars.MustGatherRootPath,
 			Namespace:         vars.Namespace,
+			NamespaceExplicit: cmd.Root().PersistentFlags().Changed("namespace"),
 			Output:            vars.OutputStringVar,
 			LabelSelector:     labelSelectorFlag,
 			NoHeaders:         noHeadersFlag,
@@ -244,6 +245,7 @@ func init() {
 	_ = addStorageV1B1Types(vars.Schema)
 	_ = addTemplateV1Types(vars.Schema)
 	_ = addOAuthV1Types(vars.Schema)
+	_ = addMetrics(vars.Schema)
 	_ = addUserV1Types(vars.Schema)
 	utilruntime.Must(schemeBuilder.AddToScheme(vars.Schema))
 
@@ -719,7 +721,20 @@ func (s *state) handleOutput(w io.Writer, errOut io.Writer) error {
 	return nil
 }
 
+// podNetworkConnectivityChecksDefaultNamespace is where network diagnostics checks are normally installed.
+const podNetworkConnectivityChecksDefaultNamespace = "openshift-network-diagnostics"
+
 func getPodNetworkConnectivityChecksResources(s *state, resources map[string]struct{}) error {
+	// PodNetworkConnectivityChecks live in a single aggregated file rather than
+	// under namespaces/, so default the namespace filter to where they normally
+	// reside (openshift-network-diagnostics) unless the user asked for all
+	// namespaces or explicitly set one.
+	if s.opts.AllNamespaces {
+		s.opts.Namespace = ""
+		s.opts.ShowNamespace = true
+	} else if !s.opts.NamespaceExplicit {
+		s.opts.Namespace = podNetworkConnectivityChecksDefaultNamespace
+	}
 	resourcesYamlPath := s.opts.RootPath + "/pod_network_connectivity_check/podnetworkconnectivitychecks.yaml"
 	_file, err := os.ReadFile(resourcesYamlPath)
 	if err == nil {
